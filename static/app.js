@@ -38,12 +38,40 @@
     const agentCwd = document.getElementById('agent-cwd');
     const agentPrompt = document.getElementById('agent-prompt');
     const generatedAgentCommand = document.getElementById('generated-agent-command');
+    const refreshLocalBtn = document.getElementById('refresh-local-btn');
+    const catalogUpdated = document.getElementById('catalog-updated');
+    const localSummary = document.getElementById('local-summary');
+    const mcpList = document.getElementById('mcp-list');
+    const skillList = document.getElementById('skill-list');
+    const agentList = document.getElementById('agent-list');
+    const commandList = document.getElementById('command-list');
+    const mcpImportBtn = document.getElementById('mcp-import-btn');
+    const mcpCommand = document.getElementById('mcp-command');
+    const skillSearchBtn = document.getElementById('skill-search-btn');
+    const skillSearchResults = document.getElementById('skill-search-results');
+    const skillInstallBtn = document.getElementById('skill-install-btn');
+    const skillCommand = document.getElementById('skill-command');
+    const saveTaskBtn = document.getElementById('save-task-btn');
+    const taskCommand = document.getElementById('task-command');
+    const createAgentBtn = document.getElementById('create-agent-btn');
+    const agentCreateResult = document.getElementById('agent-create-result');
 
     // --- API helpers ---
     async function api(url) {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json();
+    }
+
+    async function apiPost(url, payload) {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        return data;
     }
 
     // --- Toast ---
@@ -189,6 +217,75 @@
             command = `cd /d ${quoteArg(cwd)} && ${command}`;
         }
         generatedAgentCommand.textContent = command;
+    }
+
+    function readValue(id) {
+        const el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+    }
+
+    function renderResourceList(container, items, emptyText, formatter) {
+        if (!container) return;
+        container.innerHTML = '';
+        if (!items || items.length === 0) {
+            container.innerHTML = `<div class="resource-empty">${escapeHtml(emptyText)}</div>`;
+            return;
+        }
+        items.slice(0, 20).forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'resource-row';
+            row.innerHTML = formatter(item);
+            container.appendChild(row);
+        });
+    }
+
+    function renderLocalCatalog(catalog) {
+        if (!catalog || !catalog.counts) return;
+        const counts = catalog.counts;
+        if (catalogUpdated) {
+            catalogUpdated.innerHTML = `已读取本地索引：<code>data/catalog.json</code>，更新时间 ${escapeHtml(catalog.generatedAt || '')}`;
+        }
+        if (localSummary) {
+            localSummary.innerHTML = `
+                <div><strong>${counts.mcpServers || 0}</strong><span>MCP</span></div>
+                <div><strong>${counts.skills || 0}</strong><span>Skills</span></div>
+                <div><strong>${counts.agents || 0}</strong><span>Agents</span></div>
+                <div><strong>${counts.commands || 0}</strong><span>Commands</span></div>
+            `;
+        }
+        renderResourceList(mcpList, catalog.mcpServers, '未发现本地 MCP 配置', item => `
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.scope)} · ${escapeHtml(item.transport || '')}</span>
+            <code>${escapeHtml(item.command || item.url || item.path || '')}</code>
+        `);
+        renderResourceList(skillList, catalog.skills, '未发现本地 Skill', item => `
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
+            <code>${escapeHtml(item.path || '')}</code>
+        `);
+        renderResourceList(agentList, catalog.agents, '未发现本地 Agent', item => `
+            <strong>${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
+            <code>${escapeHtml(item.path || '')}</code>
+        `);
+        renderResourceList(commandList, catalog.commands, '未发现本地 slash command', item => `
+            <strong>/${escapeHtml(item.name)}</strong>
+            <span>${escapeHtml(item.scope)}</span>
+            <code>${escapeHtml(item.path || '')}</code>
+        `);
+    }
+
+    async function loadLocalCatalog(refresh = false) {
+        try {
+            const catalog = refresh
+                ? await apiPost('/api/local/refresh', {})
+                : await api('/api/local/catalog');
+            renderLocalCatalog(catalog);
+            if (refresh) showToast('本地索引已刷新');
+        } catch (e) {
+            console.error('Failed to load local catalog:', e);
+            showToast(`本地索引读取失败：${e.message}`);
+        }
     }
 
     async function copyText(text) {
@@ -452,6 +549,126 @@
         });
     }
 
+    if (refreshLocalBtn) {
+        refreshLocalBtn.addEventListener('click', () => loadLocalCatalog(true));
+    }
+
+    if (mcpImportBtn) {
+        mcpImportBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/mcp/import-json', {
+                    name: readValue('mcp-name'),
+                    json: readValue('mcp-json'),
+                });
+                mcpCommand.textContent = result.command;
+                showToast('MCP 导入命令已保存');
+                loadLocalCatalog();
+            } catch (e) {
+                showToast(`MCP JSON 错误：${e.message}`);
+            }
+        });
+    }
+
+    if (skillInstallBtn) {
+        skillInstallBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/skills/install-command', {
+                    skillName: readValue('skill-name'),
+                    repoUrl: readValue('skill-repo'),
+                });
+                skillCommand.textContent = result.command;
+                showToast('Skill 安装命令已保存');
+                loadLocalCatalog();
+            } catch (e) {
+                showToast(`Skill 参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (skillSearchBtn) {
+        skillSearchBtn.addEventListener('click', async () => {
+            if (!skillSearchResults) return;
+            skillSearchResults.innerHTML = '<div class="resource-empty">搜索中...</div>';
+            try {
+                const data = await apiPost('/api/skills/search', {
+                    query: readValue('skill-search-query'),
+                });
+                if (!data.results || data.results.length === 0) {
+                    skillSearchResults.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
+                    return;
+                }
+                skillSearchResults.innerHTML = '';
+                data.results.forEach(result => {
+                    const row = document.createElement('div');
+                    row.className = 'search-result-row';
+                    row.innerHTML = `
+                        <div>
+                            <strong>${escapeHtml(result.name)}</strong>
+                            <span>${escapeHtml(result.description || 'no description')} · ${result.stars || 0} stars</span>
+                            <code>${escapeHtml(result.repoUrl)}</code>
+                        </div>
+                        <button class="btn-mini" data-use-skill-name="${escapeHtml(result.name)}" data-use-skill-repo="${escapeHtml(result.repoUrl)}">使用</button>
+                    `;
+                    skillSearchResults.appendChild(row);
+                });
+            } catch (e) {
+                skillSearchResults.innerHTML = `<div class="resource-empty">搜索失败：${escapeHtml(e.message)}</div>`;
+            }
+        });
+    }
+
+    document.addEventListener('click', (e) => {
+        const useSkill = e.target.closest('[data-use-skill-repo]');
+        if (!useSkill) return;
+        const skillNameInput = document.getElementById('skill-name');
+        const skillRepoInput = document.getElementById('skill-repo');
+        if (skillNameInput) skillNameInput.value = useSkill.dataset.useSkillName || '';
+        if (skillRepoInput) skillRepoInput.value = useSkill.dataset.useSkillRepo || '';
+        showToast('已填入 Skill 安装表单');
+    });
+
+    if (saveTaskBtn) {
+        saveTaskBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/tasks', {
+                    type: readValue('task-type'),
+                    taskName: readValue('task-name'),
+                    schedule: readValue('task-schedule'),
+                    startTime: readValue('task-time'),
+                    interval: readValue('task-interval'),
+                    cwd: readValue('task-cwd'),
+                    permissionMode: readValue('task-permission'),
+                    prompt: readValue('task-prompt'),
+                });
+                taskCommand.textContent = result.command;
+                showToast('任务命令已保存');
+                loadLocalCatalog();
+            } catch (e) {
+                showToast(`任务参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (createAgentBtn) {
+        createAgentBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/agents', {
+                    scope: readValue('create-agent-scope'),
+                    name: readValue('create-agent-name'),
+                    description: readValue('create-agent-description'),
+                    model: readValue('create-agent-model'),
+                    tools: readValue('create-agent-tools'),
+                    prompt: readValue('create-agent-prompt'),
+                });
+                agentCreateResult.textContent = `已创建：${result.path}`;
+                showToast('Agent 文件已创建');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Agent 参数错误：${e.message}`);
+            }
+        });
+    }
+
     // --- Event listeners ---
     projectSelect.addEventListener('change', () => {
         currentProject = projectSelect.value;
@@ -496,5 +713,6 @@
 
     // --- Init ---
     buildAgentCommand();
+    loadLocalCatalog();
     loadProjects();
 })();

@@ -68,15 +68,16 @@
                                 </svg>
                             </div>
                             <h1 class="welcome-title">Claude Code 会话工作台</h1>
-                            <p class="welcome-desc">管理 MCP 与 Skill，生成启动或恢复会话命令，并快速查看定时任务、多 agent 与斜杠命令用法。</p>
+                            <p class="welcome-desc">读取本机 Claude 配置，管理 MCP、Skill、Agent 和定时任务参数；所有命令都由你的输入生成并保存到本地。</p>
                             <div class="hero-actions">
                                 <button class="btn-primary" data-copy="#generated-agent-command">复制当前命令</button>
+                                <button class="btn-secondary" id="refresh-local-btn">刷新本地索引</button>
                                 <button class="btn-secondary" id="focus-search-btn">选择会话</button>
                             </div>
                         </div>
                         <div class="code-window-card" id="agent-command-builder">
                             <div class="code-window-header">
-                                <span>agent command</span>
+                                <span>launch / resume command</span>
                                 <span class="status-dot"></span>
                             </div>
                             <div class="builder-grid">
@@ -106,75 +107,107 @@
                                 </label>
                                 <label class="wide">
                                     <span>启动提示词</span>
-                                    <textarea id="agent-prompt" rows="3" placeholder="说明目标、边界、权限和验收方式"></textarea>
+                                    <textarea id="agent-prompt" rows="3" placeholder="输入本次会话要执行的具体目标"></textarea>
                                 </label>
                             </div>
                             <pre class="generated-command"><code id="generated-agent-command">claude</code></pre>
-                            <p class="command-note">跳过权限确认适合一次性自动化任务；涉及未知仓库或破坏性命令时保持默认确认。</p>
+                            <p class="command-note">命令只根据表单内容生成；复制后由你在终端执行。</p>
                         </div>
                     </div>
 
+                    <section class="workspace-section local-catalog-section" id="local-catalog-panel">
+                        <div class="section-heading">
+                            <h2>本地索引</h2>
+                            <p id="catalog-updated">启动服务后会扫描本机配置并写入 <code>data/catalog.json</code>。</p>
+                        </div>
+                        <div class="summary-grid" id="local-summary">
+                            <div><strong>0</strong><span>MCP</span></div>
+                            <div><strong>0</strong><span>Skills</span></div>
+                            <div><strong>0</strong><span>Agents</span></div>
+                            <div><strong>0</strong><span>Commands</span></div>
+                        </div>
+                        <div class="catalog-grid">
+                            <article class="catalog-panel">
+                                <h3>MCP servers</h3>
+                                <div class="resource-list" id="mcp-list"></div>
+                            </article>
+                            <article class="catalog-panel">
+                                <h3>Skills</h3>
+                                <div class="resource-list" id="skill-list"></div>
+                            </article>
+                            <article class="catalog-panel">
+                                <h3>Agents</h3>
+                                <div class="resource-list" id="agent-list"></div>
+                            </article>
+                            <article class="catalog-panel">
+                                <h3>Slash commands</h3>
+                                <div class="resource-list" id="command-list"></div>
+                            </article>
+                        </div>
+                    </section>
+
                     <section class="workspace-section" id="mcp-skill-manager">
                         <div class="section-heading">
-                            <h2>MCP 与 Skill 管理</h2>
-                            <p>把常见下载、安装、查看、移除动作整理成可复制命令；实际执行前仍由终端确认。</p>
+                            <h2>MCP 与 Skill</h2>
+                            <p>MCP 支持粘贴 JSON 生成 <code>add-json</code> 命令；Skill 先支持 Git 仓库安装命令和本地索引。</p>
                         </div>
-                        <div class="operation-grid">
-                            <article class="operation-card">
-                                <div class="operation-icon">M</div>
-                                <h3>查看 MCP 服务</h3>
-                                <p>确认当前项目已经连接的 MCP server。</p>
-                                <code>claude mcp list</code>
-                                <button class="btn-mini" data-copy-text="claude mcp list">复制</button>
+                        <div class="control-grid">
+                            <article class="control-panel dark-control">
+                                <h3>MCP JSON 导入</h3>
+                                <div class="form-grid">
+                                    <label><span>名称</span><input id="mcp-name" type="text" placeholder="browser"></label>
+                                    <label class="wide"><span>JSON</span><textarea id="mcp-json" rows="5" placeholder='{"command":"npx","args":["browser-mcp"]}'></textarea></label>
+                                </div>
+                                <button class="btn-secondary-on-dark" id="mcp-import-btn">生成并保存</button>
+                                <pre class="generated-command"><code id="mcp-command"></code></pre>
+                                <button class="btn-mini light" data-copy="#mcp-command">复制 MCP 命令</button>
                             </article>
-                            <article class="operation-card dark-card">
-                                <div class="operation-icon">+</div>
-                                <h3>添加 MCP 服务</h3>
-                                <p>把本地或 npx/uvx 启动的服务注册到 Claude Code。</p>
-                                <code>claude mcp add &lt;name&gt; -- &lt;command&gt; &lt;args&gt;</code>
-                                <button class="btn-mini light" data-copy-text="claude mcp add &lt;name&gt; -- &lt;command&gt; &lt;args&gt;">复制</button>
-                            </article>
-                            <article class="operation-card">
-                                <div class="operation-icon">S</div>
-                                <h3>打开 Skill 目录</h3>
-                                <p>下载或整理本机 Claude Code skills。</p>
-                                <code>explorer %USERPROFILE%\.claude\skills</code>
-                                <button class="btn-mini" data-copy-text="explorer %USERPROFILE%\.claude\skills">复制</button>
-                            </article>
-                            <article class="operation-card coral-card">
-                                <div class="operation-icon">↓</div>
-                                <h3>下载 Skill 模板</h3>
-                                <p>把仓库型 skill 放入本机 skills 目录后重启会话。</p>
-                                <code>git clone &lt;repo-url&gt; "%USERPROFILE%\.claude\skills\&lt;skill-name&gt;"</code>
-                                <button class="btn-mini invert" data-copy-text="git clone &lt;repo-url&gt; &quot;%USERPROFILE%\.claude\skills\&lt;skill-name&gt;&quot;">复制</button>
+                            <article class="control-panel">
+                                <h3>Skill 仓库安装</h3>
+                                <div class="form-grid">
+                                    <label class="wide"><span>搜索 Skill 仓库</span><input id="skill-search-query" type="text" placeholder="例如 pdf、browser、testing"></label>
+                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开仓库</button></label>
+                                    <label><span>Skill 名称</span><input id="skill-name" type="text" placeholder="repo 名称可自动推断"></label>
+                                    <label class="wide"><span>Git 仓库 URL</span><input id="skill-repo" type="text" placeholder="https://github.com/org/skill-repo.git"></label>
+                                </div>
+                                <div class="search-results" id="skill-search-results"></div>
+                                <button class="btn-secondary" id="skill-install-btn">生成并保存</button>
+                                <pre class="light-command"><code id="skill-command"></code></pre>
+                                <button class="btn-mini" data-copy="#skill-command">复制 Skill 命令</button>
+                                <p class="fine-print">搜索使用 GitHub 公开仓库接口；安装前请确认仓库可信。</p>
                             </article>
                         </div>
                     </section>
 
                     <section class="workspace-section split-section" id="automation-agent-patterns">
                         <div class="callout-card-coral">
-                            <h2>常用操作</h2>
-                            <div class="pattern-list">
-                                <article>
-                                    <h3>设置定时任务</h3>
-                                    <p>Windows 使用任务计划程序运行固定目录下的 Claude 命令。</p>
-                                    <code>schtasks /Create /SC DAILY /TN "Claude Daily" /TR "cmd /c cd /d D:\path && claude --permission-mode plan &quot;今日巡检&quot;" /ST 09:00</code>
-                                </article>
-                                <article>
-                                    <h3>多 agent 模式</h3>
-                                    <p>把目标拆成互不共享状态的子任务，并在提示词中要求主 agent 汇总。</p>
-                                    <code>请用多 agent：A 负责代码检索，B 负责实现，C 负责验证，最后合并结论。</code>
-                                </article>
+                            <h2>定时任务</h2>
+                            <div class="form-grid pale-form">
+                                <label><span>类型</span><select id="task-type"><option value="schtasks">Windows Task Scheduler</option><option value="loop">Claude /loop</option></select></label>
+                                <label><span>任务名称</span><input id="task-name" type="text" placeholder="Claude Daily"></label>
+                                <label><span>周期</span><select id="task-schedule"><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option><option value="ONCE">Once</option></select></label>
+                                <label><span>开始时间</span><input id="task-time" type="time" value="09:00"></label>
+                                <label><span>/loop 间隔</span><input id="task-interval" type="text" placeholder="30m 或 2h"></label>
+                                <label><span>权限</span><select id="task-permission"><option value="default">默认确认</option><option value="plan">计划模式</option><option value="acceptEdits">自动接受编辑</option><option value="bypassPermissions">跳过确认</option></select></label>
+                                <label class="wide"><span>工作目录</span><input id="task-cwd" type="text" placeholder="D:\code\myweb\project"></label>
+                                <label class="wide"><span>任务目标</span><textarea id="task-prompt" rows="3" placeholder="输入定时运行时要执行的目标"></textarea></label>
                             </div>
+                            <button class="btn-secondary" id="save-task-btn">生成并保存任务</button>
+                            <pre class="coral-command"><code id="task-command"></code></pre>
+                            <button class="btn-mini invert" data-copy="#task-command">复制任务命令</button>
                         </div>
                         <div class="product-mockup-card-dark">
-                            <h2>提示词骨架</h2>
-                            <pre><code>目标：完成...
-范围：只改...
-权限：先计划，再执行；危险命令需确认
-约束：遵循现有项目风格
-验收：运行...，给出变更文件和结果</code></pre>
-                            <button class="btn-secondary-on-dark" data-copy-text="目标：完成...`n范围：只改...`n权限：先计划，再执行；危险命令需确认`n约束：遵循现有项目风格`n验收：运行...，给出变更文件和结果">复制骨架</button>
+                            <h2>创建 Agent</h2>
+                            <div class="form-grid">
+                                <label><span>作用域</span><select id="create-agent-scope"><option value="project">项目</option><option value="user">用户</option></select></label>
+                                <label><span>名称</span><input id="create-agent-name" type="text" placeholder="qa-reviewer"></label>
+                                <label class="wide"><span>描述</span><input id="create-agent-description" type="text" placeholder="何时应调用这个 agent"></label>
+                                <label><span>模型</span><input id="create-agent-model" type="text" placeholder="sonnet"></label>
+                                <label><span>工具</span><input id="create-agent-tools" type="text" placeholder="Read, Grep, Bash"></label>
+                                <label class="wide"><span>系统提示词</span><textarea id="create-agent-prompt" rows="5" placeholder="输入这个 agent 的完整职责和边界"></textarea></label>
+                            </div>
+                            <button class="btn-secondary-on-dark" id="create-agent-btn">创建 Agent 文件</button>
+                            <p class="command-note" id="agent-create-result">Agent 会写入本地 .claude/agents 或用户 agents 目录。</p>
                         </div>
                     </section>
 

@@ -21,7 +21,11 @@ python server.py
 - 📋 一键复制 `claude -r <session-id>` 恢复命令
 - 🧰 首页管理常用 MCP / Skill 下载与查看命令
 - 🛡️ 生成启动或恢复会话命令，可配置权限模式、工作目录和提示词
-- ⏱️ 提供定时任务、多 agent 模式和常用 `/` 命令速查
+- 🗂️ 启动时扫描本地 MCP、Skill、Agent 和 slash command，并保存到 `data/catalog.json`
+- 📥 支持粘贴 MCP JSON 生成 `claude mcp add-json` 命令
+- 📦 支持根据 Git 仓库 URL 生成 Skill 安装命令
+- ⏱️ 通过表单参数生成 Windows Task Scheduler 或 `/loop` 命令
+- 🤖 通过表单创建项目级或用户级 Agent Markdown 文件
 - 🔍 搜索过滤会话
 - 🎨 遵循 Anthropic 设计规范（cream canvas + coral accent）
 
@@ -36,6 +40,12 @@ python server.py
 后续加载时通过文件指纹（大小 + 修改时间）判断是否需要重新解析：
 - 未改变 → 直接返回缓存（毫秒级响应）
 - 有改变 → 重新解析并更新缓存
+
+## 本地数据
+
+启动 `server.py` 时会扫描当前工作目录和 `~/.claude`，并把本地索引写入 `data/catalog.json`。
+首页表单保存的 MCP JSON 导入记录、Skill 安装记录和定时任务参数也写入 `data/`，用于下次快速读取。
+`data/` 是本机状态目录，已加入 `.gitignore`。
 
 ## 快捷键
 

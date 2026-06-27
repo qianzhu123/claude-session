@@ -1,6 +1,7 @@
 * text=auto
 
 .gitattributes text eol=lf
+.gitignore text eol=lf
 *.bat text eol=crlf
 *.css text eol=lf
 *.html text eol=lf
