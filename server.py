@@ -116,7 +116,7 @@ def parse_jsonl(filepath):
                                     input_preview = json.dumps(tool_input, ensure_ascii=False)
                                     if len(input_preview) > 200:
                                         input_preview = input_preview[:200] + "..."
-                                    content_parts.append(f"🔧 {tool_name}({input_preview})")
+                                    content_parts.append(f"[Tool] {tool_name}({input_preview})")
                     elif isinstance(raw_content, str):
                         content_parts.append(raw_content)
 
@@ -319,14 +319,14 @@ def main():
 
     cache_str = str(CACHE_DIR)
     projects_str = str(PROJECTS_DIR)
-    print(f"╔══════════════════════════════════════════════╗")
-    print(f"║   Claude Code Session Viewer                 ║")
-    print(f"╠══════════════════════════════════════════════╣")
-    print(f"║  URL:     http://localhost:{PORT}              ║")
-    print(f"║  CWD:     {cwd:<33s}║")
-    print(f"║  Cache:   {cache_str:<33s}║")
-    print(f"║  Projects: {projects_str:<31s}║")
-    print(f"╚══════════════════════════════════════════════╝")
+    print("=" * 50)
+    print("Claude Code Session Viewer")
+    print("=" * 50)
+    print(f"URL:      http://localhost:{PORT}")
+    print(f"CWD:      {cwd}")
+    print(f"Cache:    {cache_str}")
+    print(f"Projects: {projects_str}")
+    print("=" * 50)
     print()
 
     server = http.server.HTTPServer(("127.0.0.1", PORT), RequestHandler)

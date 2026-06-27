@@ -129,9 +129,9 @@
         // Links: [text](url)
         html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
-        // Tool use pattern: 🔧 ToolName(...)
-        html = html.replace(/🔧 (\w+)\(([\s\S]*?\))/g, (match, name, input) => {
-            return `<div class="tool-use-block">🔧 ${escapeHtml(name)}(${escapeHtml(input)})</div>`;
+        // Tool use pattern: [Tool] ToolName(...)
+        html = html.replace(/\[Tool\] (\w+)\(([\s\S]*?\))/g, (match, name, input) => {
+            return `<div class="tool-use-block">[Tool] ${escapeHtml(name)}(${escapeHtml(input)})</div>`;
         });
 
         // Paragraphs (double newline)
