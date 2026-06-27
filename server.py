@@ -9,7 +9,9 @@ import http.server
 import json
 import os
 import re
+import shutil
 import stat
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -97,8 +99,87 @@ def scan_skill_dir(base_dir, scope):
             "description": meta.get("description", ""),
             "scope": scope,
             "path": str(skill_md.parent),
+            "sourceType": "direct",
+        })
+    for skill_md in sorted(base_dir.glob("*/skills/*/SKILL.md")):
+        text = skill_md.read_text(encoding="utf-8", errors="replace")
+        meta = parse_frontmatter(text)
+        bundle_dir = skill_md.parent.parent.parent
+        top_level_target = base_dir / skill_md.parent.name
+        if top_level_target.exists():
+            continue
+        skills.append({
+            "name": meta.get("name") or skill_md.parent.name,
+            "description": meta.get("description", ""),
+            "scope": scope,
+            "path": str(skill_md.parent),
+            "sourceType": "bundle",
+            "bundle": bundle_dir.name,
+            "bundlePath": str(bundle_dir),
+            "activatable": not top_level_target.exists(),
         })
     return skills
+
+
+def find_bundle_skill_dirs(bundle_dir):
+    bundle_dir = Path(bundle_dir)
+    candidates = []
+    if (bundle_dir / "skills").exists():
+        candidates.extend((bundle_dir / "skills").glob("*/SKILL.md"))
+    candidates.extend(bundle_dir.glob("*/SKILL.md"))
+    unique = []
+    seen = set()
+    for skill_md in sorted(candidates):
+        parent = skill_md.parent.resolve()
+        if parent in seen:
+            continue
+        seen.add(parent)
+        unique.append(skill_md.parent)
+    return unique
+
+
+def activate_skill_bundle(bundle_path, claude_dir=None):
+    claude_dir = Path(claude_dir or CLAUDE_DIR)
+    bundle_dir = Path(bundle_path).expanduser()
+    if not bundle_dir.exists():
+        raise ValueError("bundlePath does not exist")
+
+    skill_root = claude_dir / "skills"
+    skill_root.mkdir(parents=True, exist_ok=True)
+    skill_dirs = find_bundle_skill_dirs(bundle_dir)
+    if not skill_dirs:
+        raise ValueError("No nested SKILL.md files found in bundlePath")
+
+    results = []
+    activated = 0
+    skipped = 0
+    for source_dir in skill_dirs:
+        skill_name = safe_name(source_dir.name)
+        target_dir = skill_root / skill_name
+        if target_dir.exists():
+            skipped += 1
+            results.append({
+                "name": skill_name,
+                "source": str(source_dir),
+                "target": str(target_dir),
+                "status": "exists",
+            })
+            continue
+        shutil.copytree(source_dir, target_dir)
+        activated += 1
+        results.append({
+            "name": skill_name,
+            "source": str(source_dir),
+            "target": str(target_dir),
+            "status": "activated",
+        })
+
+    return {
+        "bundlePath": str(bundle_dir),
+        "activated": activated,
+        "skipped": skipped,
+        "skills": results,
+    }
 
 
 def scan_agent_dir(base_dir, scope):
@@ -240,6 +321,57 @@ def build_task_command(params):
     return f"schtasks /Create /SC {schedule} /TN {cmd_quote(task_name)} /TR {schtasks_quote(task_run)} /ST {start_time}"
 
 
+def build_task_run(params):
+    cwd = params.get("cwd", "").strip()
+    permission_mode = params.get("permissionMode", "default").strip()
+    prompt = params.get("prompt", "").strip()
+
+    claude_parts = ["claude"]
+    if permission_mode and permission_mode != "default":
+        claude_parts.extend(["--permission-mode", permission_mode])
+    claude_parts.append(cmd_quote(prompt))
+    return f"cmd /c cd /d {cmd_quote(cwd)} && {' '.join(claude_parts)}"
+
+
+def build_task_argv(params):
+    task_name = params.get("taskName", "").strip()
+    schedule = params.get("schedule", "DAILY").strip().upper()
+    start_time = params.get("startTime", "").strip()
+    cwd = params.get("cwd", "").strip()
+    prompt = params.get("prompt", "").strip()
+
+    if not task_name or not schedule or not start_time or not cwd or not prompt:
+        raise ValueError("taskName, schedule, startTime, cwd, and prompt are required")
+
+    argv = [
+        "schtasks",
+        "/Create",
+        "/SC",
+        schedule,
+        "/TN",
+        task_name,
+        "/TR",
+        build_task_run(params),
+        "/ST",
+        start_time,
+    ]
+    if params.get("force"):
+        argv.append("/F")
+    return argv
+
+
+def create_windows_task(params, runner=None):
+    runner = runner or subprocess.run
+    result = runner(build_task_argv(params), capture_output=True, text=True, check=False)
+    return {
+        "command": build_task_command(params) + (" /F" if params.get("force") else ""),
+        "returnCode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "created": result.returncode == 0,
+    }
+
+
 def build_loop_command(params):
     interval = params.get("interval", "").strip()
     prompt = params.get("prompt", "").strip()
@@ -266,6 +398,34 @@ def build_skill_install_command(params):
     return f"git clone {cmd_quote(repo_url)} {cmd_quote(destination)}"
 
 
+def install_skill_repository(params, claude_dir=None, runner=None):
+    repo_url = params.get("repoUrl", "").strip()
+    skill_name = safe_name(params.get("skillName") or Path(repo_url).stem.replace(".git", ""))
+    if not repo_url:
+        raise ValueError("repoUrl is required")
+    if not repo_url.startswith(("https://", "http://", "git@")):
+        raise ValueError("repoUrl must be a Git repository URL")
+
+    claude_dir = Path(claude_dir or CLAUDE_DIR)
+    target_dir = claude_dir / "skills" / skill_name
+    if target_dir.exists():
+        raise ValueError(f"Skill target already exists: {target_dir}")
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    runner = runner or subprocess.run
+    result = runner(["git", "clone", repo_url, str(target_dir)], capture_output=True, text=True, check=False)
+    return {
+        "name": skill_name,
+        "repoUrl": repo_url,
+        "path": str(target_dir),
+        "command": build_skill_install_command({"skillName": skill_name, "repoUrl": repo_url}),
+        "returnCode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "installed": result.returncode == 0,
+    }
+
+
 def github_json_fetcher(url):
     req = urllib.request.Request(url, headers={
         "Accept": "application/vnd.github+json",
@@ -275,28 +435,115 @@ def github_json_fetcher(url):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def search_skill_repositories(query, fetcher=None):
+def _first_list(data):
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in ("items", "results", "data", "skills", "plugins"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _github_repo_url(value):
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if value.startswith(("http://", "https://", "git@")):
+        return value
+    if re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", value):
+        return f"https://github.com/{value}"
+    return ""
+
+
+def _catalog_link_result(source, term, url):
+    return [{
+        "name": f"Open {source} search",
+        "repoUrl": "",
+        "sourceUrl": url,
+        "description": f"Open {source} and inspect results for '{term}'. Install is enabled only when a Git repository URL is available.",
+        "stars": "",
+        "source": source,
+        "installable": False,
+    }]
+
+
+def search_skill_repositories(query, source="github", fetcher=None):
     term = str(query or "").strip()
     if not term:
         raise ValueError("query is required")
     fetcher = fetcher or github_json_fetcher
-    search_query = f'{term} "SKILL.md" "Claude Code"'
-    encoded = urllib.parse.urlencode({
-        "q": search_query,
-        "sort": "stars",
-        "order": "desc",
-        "per_page": "10",
-    })
-    data = fetcher(f"https://api.github.com/search/repositories?{encoded}")
+    source = str(source or "github").strip().lower()
     results = []
-    for item in data.get("items", []):
-        results.append({
-            "name": item.get("name", ""),
-            "repoUrl": item.get("html_url", ""),
-            "description": item.get("description", ""),
-            "stars": item.get("stargazers_count", 0),
+
+    if source == "github":
+        search_query = f'{term} "SKILL.md" "Claude Code"'
+        encoded = urllib.parse.urlencode({
+            "q": search_query,
+            "sort": "stars",
+            "order": "desc",
+            "per_page": "10",
         })
-    return results
+        data = fetcher(f"https://api.github.com/search/repositories?{encoded}")
+        for item in _first_list(data):
+            repo_url = item.get("html_url", "")
+            results.append({
+                "name": item.get("name", ""),
+                "repoUrl": repo_url,
+                "sourceUrl": repo_url,
+                "description": item.get("description", ""),
+                "stars": item.get("stargazers_count", 0),
+                "source": "github",
+                "installable": bool(repo_url),
+            })
+        return results
+
+    if source == "skills-sh":
+        encoded = urllib.parse.urlencode({"q": term})
+        try:
+            data = fetcher(f"https://skills.sh/api/search?{encoded}")
+        except Exception:
+            return _catalog_link_result("skills.sh", term, f"https://skills.sh/search?q={urllib.parse.quote(term)}")
+        for item in _first_list(data):
+            repo_url = _github_repo_url(item.get("repoUrl") or item.get("repository") or item.get("repo") or item.get("github"))
+            source_url = item.get("url") or item.get("href") or repo_url
+            results.append({
+                "name": item.get("name") or item.get("title") or Path(repo_url).stem,
+                "repoUrl": repo_url,
+                "sourceUrl": source_url,
+                "description": item.get("description") or item.get("summary") or "",
+                "stars": item.get("stars") or item.get("stargazers_count") or "",
+                "source": "skills.sh",
+                "installable": bool(repo_url),
+            })
+        return results or _catalog_link_result("skills.sh", term, f"https://skills.sh/search?q={urllib.parse.quote(term)}")
+
+    if source == "clawhub":
+        encoded = urllib.parse.urlencode({"q": term})
+        try:
+            data = fetcher(f"https://www.clawhub.dev/api/v1/skills?{encoded}")
+        except Exception:
+            return _catalog_link_result("ClawHub", term, f"https://www.clawhub.dev/search?q={urllib.parse.quote(term)}")
+        for item in _first_list(data):
+            repo_url = _github_repo_url(item.get("repoUrl") or item.get("repository") or item.get("repo") or item.get("githubUrl"))
+            source_url = item.get("url") or item.get("homepage") or repo_url
+            results.append({
+                "name": item.get("name") or item.get("title") or Path(repo_url).stem,
+                "repoUrl": repo_url,
+                "sourceUrl": source_url,
+                "description": item.get("description") or item.get("summary") or "",
+                "stars": item.get("stars") or item.get("stargazers_count") or "",
+                "source": "clawhub",
+                "installable": bool(repo_url),
+            })
+        return results or _catalog_link_result("ClawHub", term, f"https://www.clawhub.dev/search?q={urllib.parse.quote(term)}")
+
+    if source == "claude-plugins":
+        return _catalog_link_result("claude-plugins", term, f"https://claude-plugins.com/search?q={urllib.parse.quote(term)}")
+
+    raise ValueError("Unsupported skill search source")
 
 
 def create_agent_file(params, project_root=None, claude_dir=None):
@@ -614,6 +861,16 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 append_json_record(TASKS_PATH, record)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(record, 201)
+            elif path == "/api/tasks/create":
+                if payload.get("type", "schtasks") == "loop":
+                    raise ValueError("/loop tasks must be run inside Claude; only Windows scheduled tasks can be created here")
+                result = create_windows_task(payload)
+                record = dict(payload)
+                record.update(result)
+                record["createdAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                append_json_record(TASKS_PATH, record)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201 if result["created"] else 500)
             elif path == "/api/mcp/import-json":
                 command = build_mcp_import_command(payload.get("name", ""), payload.get("json", ""))
                 record = {
@@ -632,8 +889,20 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 append_json_record(SKILL_INSTALLS_PATH, record)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(record, 201)
+            elif path == "/api/skills/install":
+                result = install_skill_repository(payload, claude_dir=CLAUDE_DIR)
+                record = dict(payload)
+                record.update(result)
+                record["createdAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                append_json_record(SKILL_INSTALLS_PATH, record)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201 if result["installed"] else 500)
+            elif path == "/api/skills/activate-bundle":
+                result = activate_skill_bundle(payload.get("bundlePath", ""), claude_dir=CLAUDE_DIR)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(result, 201)
             elif path == "/api/skills/search":
-                self._json_response({"results": search_skill_repositories(payload.get("query", ""))})
+                self._json_response({"results": search_skill_repositories(payload.get("query", ""), source=payload.get("source", "github"))})
             elif path == "/api/agents":
                 record = create_agent_file(payload, project_root=Path(os.getcwd()), claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=os.getcwd())

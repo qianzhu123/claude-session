@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 import server
 
@@ -102,6 +103,123 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertEqual(results[0]["name"], "writer-skill")
         self.assertEqual(results[0]["repoUrl"], "https://github.com/example/writer-skill")
         self.assertEqual(results[0]["stars"], 12)
+
+    def test_nested_plugin_skills_are_indexed_as_bundle_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_home = root / "home" / ".claude"
+            nested_skill = claude_home / "skills" / "cherrystudio-skills" / "skills" / "pdf"
+            nested_skill.mkdir(parents=True)
+            nested_skill.joinpath("SKILL.md").write_text(
+                "---\nname: pdf\ndescription: Work with PDF files\n---\n# PDF\n",
+                encoding="utf-8",
+            )
+
+            catalog = server.build_local_catalog(project_root=root / "project", claude_dir=claude_home)
+
+            self.assertEqual(catalog["counts"]["skills"], 1)
+            self.assertEqual(catalog["skills"][0]["name"], "pdf")
+            self.assertEqual(catalog["skills"][0]["sourceType"], "bundle")
+            self.assertEqual(catalog["skills"][0]["bundle"], "cherrystudio-skills")
+
+    def test_activate_skill_bundle_copies_missing_nested_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_home = root / ".claude"
+            bundle = claude_home / "skills" / "cherrystudio-skills"
+            source = bundle / "skills" / "pdf"
+            source.mkdir(parents=True)
+            source.joinpath("SKILL.md").write_text("# PDF\n", encoding="utf-8")
+
+            result = server.activate_skill_bundle(str(bundle), claude_dir=claude_home)
+
+            self.assertEqual(result["activated"], 1)
+            self.assertTrue((claude_home / "skills" / "pdf" / "SKILL.md").exists())
+            self.assertEqual(result["skills"][0]["status"], "activated")
+
+    def test_activate_skill_bundle_skips_existing_top_level_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_home = root / ".claude"
+            bundle = claude_home / "skills" / "cherrystudio-skills"
+            (bundle / "skills" / "pdf").mkdir(parents=True)
+            (bundle / "skills" / "pdf" / "SKILL.md").write_text("# PDF bundled\n", encoding="utf-8")
+            (claude_home / "skills" / "pdf").mkdir(parents=True)
+            (claude_home / "skills" / "pdf" / "SKILL.md").write_text("# PDF existing\n", encoding="utf-8")
+
+            result = server.activate_skill_bundle(str(bundle), claude_dir=claude_home)
+
+            self.assertEqual(result["activated"], 0)
+            self.assertEqual(result["skipped"], 1)
+            self.assertEqual((claude_home / "skills" / "pdf" / "SKILL.md").read_text(encoding="utf-8"), "# PDF existing\n")
+
+    def test_create_windows_task_executes_schtasks_with_arguments(self):
+        runner = Mock()
+        runner.return_value.returncode = 0
+        runner.return_value.stdout = "SUCCESS"
+        runner.return_value.stderr = ""
+
+        result = server.create_windows_task(
+            {
+                "taskName": "Claude Daily",
+                "schedule": "DAILY",
+                "startTime": "09:30",
+                "cwd": "D:\\code\\myweb\\demo",
+                "permissionMode": "plan",
+                "prompt": "Run daily checks",
+                "force": True,
+            },
+            runner=runner,
+        )
+
+        args = runner.call_args.args[0]
+        self.assertEqual(args[:6], ["schtasks", "/Create", "/SC", "DAILY", "/TN", "Claude Daily"])
+        self.assertIn("/TR", args)
+        self.assertIn("/F", args)
+        self.assertEqual(result["returnCode"], 0)
+        self.assertEqual(result["stdout"], "SUCCESS")
+
+    def test_skills_sh_search_maps_api_results(self):
+        def fake_fetcher(url):
+            self.assertIn("skills.sh/api/search", url)
+            return {
+                "results": [
+                    {
+                        "name": "pdf",
+                        "description": "PDF skill",
+                        "repo": "vercel-labs/agent-skills",
+                        "url": "https://skills.sh/vercel-labs/agent-skills/pdf",
+                    }
+                ]
+            }
+
+        results = server.search_skill_repositories("pdf", source="skills-sh", fetcher=fake_fetcher)
+
+        self.assertEqual(results[0]["name"], "pdf")
+        self.assertEqual(results[0]["repoUrl"], "https://github.com/vercel-labs/agent-skills")
+        self.assertTrue(results[0]["installable"])
+
+    def test_install_skill_repository_runs_git_clone(self):
+        runner = Mock()
+        runner.return_value.returncode = 0
+        runner.return_value.stdout = "cloned"
+        runner.return_value.stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_home = Path(tmp) / ".claude"
+            result = server.install_skill_repository(
+                {"skillName": "writer", "repoUrl": "https://github.com/example/writer.git"},
+                claude_dir=claude_home,
+                runner=runner,
+            )
+
+        self.assertEqual(runner.call_args.args[0], [
+            "git",
+            "clone",
+            "https://github.com/example/writer.git",
+            str(claude_home / "skills" / "writer"),
+        ])
+        self.assertEqual(result["returnCode"], 0)
 
 
 if __name__ == "__main__":

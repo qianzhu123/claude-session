@@ -165,16 +165,22 @@
                             <article class="control-panel">
                                 <h3>Skill 仓库安装</h3>
                                 <div class="form-grid">
-                                    <label class="wide"><span>搜索 Skill 仓库</span><input id="skill-search-query" type="text" placeholder="例如 pdf、browser、testing"></label>
-                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开仓库</button></label>
+                                    <label><span>来源</span><select id="skill-search-source"><option value="github">GitHub</option><option value="skills-sh">skills.sh</option><option value="clawhub">ClawHub</option><option value="claude-plugins">claude-plugins</option></select></label>
+                                    <label><span>搜索 Skill</span><input id="skill-search-query" type="text" placeholder="例如 pdf、browser、testing"></label>
+                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开来源</button></label>
                                     <label><span>Skill 名称</span><input id="skill-name" type="text" placeholder="repo 名称可自动推断"></label>
                                     <label class="wide"><span>Git 仓库 URL</span><input id="skill-repo" type="text" placeholder="https://github.com/org/skill-repo.git"></label>
+                                    <label class="wide"><span>本地 Bundle 路径</span><input id="skill-bundle-path" type="text" value="C:\Users\Light\.claude\skills\cherrystudio-skills"></label>
                                 </div>
                                 <div class="search-results" id="skill-search-results"></div>
-                                <button class="btn-secondary" id="skill-install-btn">生成并保存</button>
+                                <div class="button-row">
+                                    <button class="btn-secondary" id="skill-install-btn">生成并保存</button>
+                                    <button class="btn-secondary" id="skill-clone-btn">直接安装 Git Skill</button>
+                                    <button class="btn-secondary" id="activate-skill-bundle-btn">激活本地 Bundle</button>
+                                </div>
                                 <pre class="light-command"><code id="skill-command"></code></pre>
                                 <button class="btn-mini" data-copy="#skill-command">复制 Skill 命令</button>
-                                <p class="fine-print">搜索使用 GitHub 公开仓库接口；安装前请确认仓库可信。</p>
+                                <p class="fine-print" id="skill-action-result">搜索支持 GitHub、skills.sh、ClawHub 和 claude-plugins；只有返回 Git 仓库 URL 的结果才允许直接安装。</p>
                             </article>
                         </div>
                     </section>
@@ -189,10 +195,14 @@
                                 <label><span>开始时间</span><input id="task-time" type="time" value="09:00"></label>
                                 <label><span>/loop 间隔</span><input id="task-interval" type="text" placeholder="30m 或 2h"></label>
                                 <label><span>权限</span><select id="task-permission"><option value="default">默认确认</option><option value="plan">计划模式</option><option value="acceptEdits">自动接受编辑</option><option value="bypassPermissions">跳过确认</option></select></label>
+                                <label><span>覆盖同名任务</span><select id="task-force"><option value="">否</option><option value="true">是，使用 /F</option></select></label>
                                 <label class="wide"><span>工作目录</span><input id="task-cwd" type="text" placeholder="D:\code\myweb\project"></label>
                                 <label class="wide"><span>任务目标</span><textarea id="task-prompt" rows="3" placeholder="输入定时运行时要执行的目标"></textarea></label>
                             </div>
-                            <button class="btn-secondary" id="save-task-btn">生成并保存任务</button>
+                            <div class="button-row">
+                                <button class="btn-secondary" id="save-task-btn">生成并保存任务</button>
+                                <button class="btn-secondary" id="create-task-btn">创建系统定时任务</button>
+                            </div>
                             <pre class="coral-command"><code id="task-command"></code></pre>
                             <button class="btn-mini invert" data-copy="#task-command">复制任务命令</button>
                         </div>
@@ -202,8 +212,8 @@
                                 <label><span>作用域</span><select id="create-agent-scope"><option value="project">项目</option><option value="user">用户</option></select></label>
                                 <label><span>名称</span><input id="create-agent-name" type="text" placeholder="qa-reviewer"></label>
                                 <label class="wide"><span>描述</span><input id="create-agent-description" type="text" placeholder="何时应调用这个 agent"></label>
-                                <label><span>模型</span><input id="create-agent-model" type="text" placeholder="sonnet"></label>
-                                <label><span>工具</span><input id="create-agent-tools" type="text" placeholder="Read, Grep, Bash"></label>
+                                <label><span>模型</span><select id="create-agent-model"><option value="">默认</option><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option></select></label>
+                                <label><span>工具</span><select id="create-agent-tools"><option value="">默认工具</option><option value="Read, Grep, Glob">只读检索</option><option value="Read, Grep, Glob, Bash">检索 + Bash</option><option value="Read, Grep, Glob, Edit, Bash">编辑 + Bash</option><option value="*">全部工具</option></select></label>
                                 <label class="wide"><span>系统提示词</span><textarea id="create-agent-prompt" rows="5" placeholder="输入这个 agent 的完整职责和边界"></textarea></label>
                             </div>
                             <button class="btn-secondary-on-dark" id="create-agent-btn">创建 Agent 文件</button>

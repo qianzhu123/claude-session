@@ -994,6 +994,13 @@ body {
     align-items: flex-start;
 }
 
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--sp-sm);
+    align-items: center;
+}
+
 .search-results {
     display: grid;
     gap: var(--sp-sm);

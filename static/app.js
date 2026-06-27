@@ -50,8 +50,12 @@
     const skillSearchBtn = document.getElementById('skill-search-btn');
     const skillSearchResults = document.getElementById('skill-search-results');
     const skillInstallBtn = document.getElementById('skill-install-btn');
+    const skillCloneBtn = document.getElementById('skill-clone-btn');
+    const activateSkillBundleBtn = document.getElementById('activate-skill-bundle-btn');
     const skillCommand = document.getElementById('skill-command');
+    const skillActionResult = document.getElementById('skill-action-result');
     const saveTaskBtn = document.getElementById('save-task-btn');
+    const createTaskBtn = document.getElementById('create-task-btn');
     const taskCommand = document.getElementById('task-command');
     const createAgentBtn = document.getElementById('create-agent-btn');
     const agentCreateResult = document.getElementById('agent-create-result');
@@ -585,6 +589,51 @@
         });
     }
 
+    if (skillCloneBtn) {
+        skillCloneBtn.addEventListener('click', async () => {
+            const repoUrl = readValue('skill-repo');
+            if (!repoUrl) {
+                showToast('请先选择或输入 Git 仓库 URL');
+                return;
+            }
+            if (!confirm(`将 git clone 到本机 Claude skills 目录：\n${repoUrl}`)) return;
+            try {
+                const result = await apiPost('/api/skills/install', {
+                    skillName: readValue('skill-name'),
+                    repoUrl,
+                });
+                skillCommand.textContent = result.command || '';
+                if (skillActionResult) {
+                    skillActionResult.textContent = result.installed
+                        ? `已安装：${result.path}`
+                        : `安装失败：${result.stderr || result.stdout || 'git clone failed'}`;
+                }
+                showToast(result.installed ? 'Skill 已安装' : 'Skill 安装失败');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Skill 安装失败：${e.message}`);
+            }
+        });
+    }
+
+    if (activateSkillBundleBtn) {
+        activateSkillBundleBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/skills/activate-bundle', {
+                    bundlePath: readValue('skill-bundle-path'),
+                });
+                if (skillActionResult) {
+                    skillActionResult.textContent = `Bundle 已处理：激活 ${result.activated} 个，跳过 ${result.skipped} 个。`;
+                }
+                skillCommand.textContent = `activated=${result.activated} skipped=${result.skipped}`;
+                showToast('本地 Bundle 已激活');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Bundle 激活失败：${e.message}`);
+            }
+        });
+    }
+
     if (skillSearchBtn) {
         skillSearchBtn.addEventListener('click', async () => {
             if (!skillSearchResults) return;
@@ -592,6 +641,7 @@
             try {
                 const data = await apiPost('/api/skills/search', {
                     query: readValue('skill-search-query'),
+                    source: readValue('skill-search-source'),
                 });
                 if (!data.results || data.results.length === 0) {
                     skillSearchResults.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
@@ -601,13 +651,17 @@
                 data.results.forEach(result => {
                     const row = document.createElement('div');
                     row.className = 'search-result-row';
+                    const sourceUrl = result.sourceUrl || result.repoUrl || '';
+                    const action = result.installable
+                        ? `<button class="btn-mini" data-use-skill-name="${escapeHtml(result.name)}" data-use-skill-repo="${escapeHtml(result.repoUrl)}">使用</button>`
+                        : `<a class="btn-mini" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">打开</a>`;
                     row.innerHTML = `
                         <div>
                             <strong>${escapeHtml(result.name)}</strong>
-                            <span>${escapeHtml(result.description || 'no description')} · ${result.stars || 0} stars</span>
-                            <code>${escapeHtml(result.repoUrl)}</code>
+                            <span>${escapeHtml(result.source || 'source')} · ${escapeHtml(result.description || 'no description')} · ${escapeHtml(result.stars || 0)} stars</span>
+                            <code>${escapeHtml(result.repoUrl || sourceUrl || '')}</code>
                         </div>
-                        <button class="btn-mini" data-use-skill-name="${escapeHtml(result.name)}" data-use-skill-repo="${escapeHtml(result.repoUrl)}">使用</button>
+                        ${action}
                     `;
                     skillSearchResults.appendChild(row);
                 });
@@ -639,12 +693,40 @@
                     cwd: readValue('task-cwd'),
                     permissionMode: readValue('task-permission'),
                     prompt: readValue('task-prompt'),
+                    force: readValue('task-force') === 'true',
                 });
                 taskCommand.textContent = result.command;
                 showToast('任务命令已保存');
                 loadLocalCatalog();
             } catch (e) {
                 showToast(`任务参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (createTaskBtn) {
+        createTaskBtn.addEventListener('click', async () => {
+            if (readValue('task-type') === 'loop') {
+                showToast('/loop 需要在 Claude 会话内运行，不能注册为系统任务');
+                return;
+            }
+            if (!confirm('将调用 Windows schtasks 创建系统定时任务。是否继续？')) return;
+            try {
+                const result = await apiPost('/api/tasks/create', {
+                    type: readValue('task-type'),
+                    taskName: readValue('task-name'),
+                    schedule: readValue('task-schedule'),
+                    startTime: readValue('task-time'),
+                    cwd: readValue('task-cwd'),
+                    permissionMode: readValue('task-permission'),
+                    prompt: readValue('task-prompt'),
+                    force: readValue('task-force') === 'true',
+                });
+                taskCommand.textContent = result.command;
+                showToast(result.created ? '系统定时任务已创建' : '系统定时任务创建失败');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`创建系统任务失败：${e.message}`);
             }
         });
     }
