@@ -328,6 +328,8 @@ body {
     flex: 1;
     overflow-y: auto;
     background: var(--colors-canvas);
+    scroll-behavior: smooth;
+    scroll-snap-type: y proximity;
 }
 
 /* Home workspace */
@@ -339,6 +341,7 @@ body {
 
 .home-dashboard {
     width: 100%;
+    position: relative;
 }
 
 .hero-band {
@@ -348,6 +351,42 @@ body {
     align-items: center;
     padding: 72px var(--sp-xxl) 64px;
     border-bottom: 1px solid var(--colors-surface-cream-strong);
+    min-height: calc(100vh - 64px);
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+}
+
+.fullpage-section {
+    min-height: calc(100vh - 64px);
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+}
+
+.fullpage-dots {
+    position: fixed;
+    z-index: 20;
+    top: 50%;
+    right: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transform: translateY(-50%);
+}
+
+.fullpage-dot {
+    width: 11px;
+    height: 11px;
+    padding: 0;
+    border: 1px solid var(--colors-primary);
+    border-radius: 999px;
+    background: var(--colors-canvas);
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.fullpage-dot.active {
+    background: var(--colors-primary);
+    transform: scale(1.35);
 }
 
 .hero-copy {
@@ -576,6 +615,27 @@ body {
     font-weight: 400;
     line-height: 1.15;
     letter-spacing: 0;
+}
+
+.control-panel h4 {
+    margin: var(--sp-lg) 0 var(--sp-sm);
+    color: var(--colors-muted);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+.compact-actions {
+    margin-top: var(--sp-xs);
+    gap: var(--sp-xs);
+}
+
+.plan-row p {
+    margin-top: var(--sp-xs);
+    color: var(--colors-muted);
+    font-size: 13px;
+    line-height: 1.5;
 }
 
 .section-heading h2 {
@@ -1539,6 +1599,20 @@ select option {
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
+    .content-area {
+        scroll-snap-type: none;
+    }
+
+    .fullpage-section,
+    .hero-band {
+        min-height: auto;
+        scroll-snap-align: none;
+    }
+
+    .fullpage-dots {
+        display: none;
+    }
+
     .sidebar {
         width: 260px;
         min-width: 260px;

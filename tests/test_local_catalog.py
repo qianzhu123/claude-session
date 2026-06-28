@@ -338,8 +338,12 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertIn('id="selected-agent-panel"', html)
         self.assertIn('id="agent-task-cron"', html)
         self.assertIn('id="agent-connection-type"', html)
-        self.assertIn('class="workspace-section agent-gated is-locked"', html)
+        self.assertIn('id="external-agent-task-list"', html)
+        self.assertIn('id="agent-daily-plan-list"', html)
+        self.assertIn('class="fullpage-dot active"', html)
+        self.assertIn('class="workspace-section agent-gated is-locked fullpage-section"', html)
         self.assertIn(".agent-gated.is-locked", css)
+        self.assertIn("scroll-snap-type", css)
         self.assertIn("select option", css)
 
     def test_qq_push_profile_saves_secrets_locally_and_returns_sanitized_status(self):
@@ -476,6 +480,69 @@ class LocalCatalogTests(unittest.TestCase):
             self.assertEqual([item["id"] for item in workspace["connections"]], ["conn-1"])
             self.assertEqual([item["id"] for item in workspace["runs"]], ["run-1"])
 
+    def test_agent_workspace_discovers_project_windows_tasks_and_daily_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "English"
+            plan_dir = project / "Agent_Daily_Plans"
+            plan_dir.mkdir(parents=True)
+            (project / "tools" / "english_agent").mkdir(parents=True)
+            (plan_dir / "2026-06-28.json").write_text(
+                json.dumps(
+                    {
+                        "date": "2026-06-28",
+                        "schedule": {
+                            "morning": {"time": "07:45", "title": "晨间词汇", "task": "背单词"},
+                            "review": {"time": "22:30", "title": "复盘", "task": "写总结"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (plan_dir / "2026-06-28.md").write_text("# 2026-06-28\n\nToday's plan", encoding="utf-8")
+            (plan_dir / "qq_targets.json").write_text(json.dumps({"group_openid": "group-1"}), encoding="utf-8")
+            (plan_dir / "logs").mkdir()
+            (plan_dir / "logs" / "qq_listener.log").write_text("line1\nline2\n", encoding="utf-8")
+
+            def fake_discover(_project_root):
+                return [
+                    {
+                        "id": "external-EnglishAgent-Morning",
+                        "source": "windows-scheduled-task",
+                        "taskName": "EnglishAgent-Morning",
+                        "state": "Ready",
+                        "schedule": "Daily 07:45",
+                        "command": "python",
+                        "arguments": f'"{project}\\tools\\english_agent\\daily_agent.py" --output-dir "{plan_dir}" push morning',
+                        "workingDirectory": str(project),
+                    }
+                ]
+
+            workspace = server.load_agent_workspace(
+                "english-learning-agent",
+                str(project),
+                task_path=project / "missing_tasks.json",
+                connection_path=project / "missing_connections.json",
+                run_path=project / "missing_runs.json",
+                external_task_loader=fake_discover,
+            )
+
+            self.assertEqual(workspace["externalTasks"][0]["taskName"], "EnglishAgent-Morning")
+            self.assertEqual(workspace["dailyPlan"]["latestJson"]["date"], "2026-06-28")
+            self.assertEqual(workspace["dailyPlan"]["latestJson"]["schedule"]["morning"]["task"], "背单词")
+            self.assertIn("2026-06-28.md", [item["name"] for item in workspace["dailyPlan"]["planFiles"]])
+            self.assertEqual(workspace["dailyPlan"]["qqTargets"]["group_openid"], "group-1")
+            self.assertIn("line2", workspace["dailyPlan"]["logs"]["qq_listener.log"])
+
+    def test_windows_task_action_builds_control_argv(self):
+        self.assertEqual(
+            server.build_windows_task_control_argv("EnglishAgent-Morning", "run"),
+            ["schtasks", "/Run", "/TN", "EnglishAgent-Morning"],
+        )
+        self.assertEqual(
+            server.build_windows_task_control_argv("EnglishAgent-Morning", "disable"),
+            ["schtasks", "/Change", "/TN", "EnglishAgent-Morning", "/DISABLE"],
+        )
+
     def test_agent_connection_saves_sanitized_secret_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "agent_connections.json"
@@ -546,10 +613,13 @@ class LocalCatalogTests(unittest.TestCase):
                 sessions = server.get_sessions_list(project_id)
 
                 self.assertEqual(sessions[0]["projectPath"], "D:\\code\\myweb\\English")
-                self.assertEqual(sessions[0]["resumeCommand"], 'cd /d "D:\\code\\myweb\\English" && claude -r abc123')
+                self.assertEqual(sessions[0]["resumeCommand"], 'Set-Location -LiteralPath "D:\\code\\myweb\\English"; claude -r abc123')
             finally:
                 server.PROJECTS_DIR = original_projects_dir
                 server.CACHE_DIR = original_cache_dir
+
+    def test_home_project_resume_command_omits_cd(self):
+        self.assertEqual(server.build_resume_command("C:\\Users\\Light", "abc123", home_path=Path("C:/Users/Light")), "claude -r abc123")
 
 
 if __name__ == "__main__":

@@ -59,7 +59,13 @@
         <main class="content-area" id="content-area">
             <div class="welcome-state" id="welcome-state">
                 <section class="home-dashboard" aria-label="Claude Code 首页工作台">
-                    <div class="hero-band">
+                    <div class="fullpage-dots" aria-label="首页区块导航">
+                        <button class="fullpage-dot active" data-section-target="home-hero" aria-label="启动命令"></button>
+                        <button class="fullpage-dot" data-section-target="local-catalog-panel" aria-label="本地索引"></button>
+                        <button class="fullpage-dot agent-gated is-locked" data-section-target="selected-agent-panel" aria-label="智能体任务"></button>
+                        <button class="fullpage-dot agent-gated is-locked" data-section-target="agent-connection-panel" aria-label="智能体连接"></button>
+                    </div>
+                    <div class="hero-band fullpage-section" id="home-hero">
                         <div class="hero-copy">
                             <div class="section-marker" aria-hidden="true">
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -116,7 +122,7 @@
                         </div>
                     </div>
 
-                    <section class="workspace-section local-catalog-section" id="local-catalog-panel">
+                    <section class="workspace-section local-catalog-section fullpage-section" id="local-catalog-panel">
                         <div class="section-heading">
                             <h2>本地索引</h2>
                             <p id="catalog-updated">启动服务后会扫描本机配置并写入 <code>data/catalog.json</code>。</p>
@@ -154,7 +160,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section agent-gated is-locked" id="selected-agent-panel">
+                    <section class="workspace-section agent-gated is-locked fullpage-section" id="selected-agent-panel">
                         <div class="section-heading">
                             <h2>选中智能体</h2>
                             <p id="selected-agent-summary">选择一个 Agent 后，才能配置它的定时任务、QQ/微信连接和运行记录。</p>
@@ -166,7 +172,12 @@
                                     <strong>Agent path</strong>
                                     <code id="selected-agent-path"></code>
                                 </div>
+                                <h4>Viewer Cron 任务</h4>
                                 <div class="resource-list" id="agent-task-list"></div>
+                                <h4>系统计划任务</h4>
+                                <div class="resource-list" id="external-agent-task-list"></div>
+                                <h4>每日计划内容</h4>
+                                <div class="resource-list" id="agent-daily-plan-list"></div>
                             </article>
                             <article class="control-panel dark-control">
                                 <h3>创建 Agent 定时任务</h3>
@@ -186,7 +197,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section agent-gated is-locked" id="agent-connection-panel">
+                    <section class="workspace-section agent-gated is-locked fullpage-section" id="agent-connection-panel">
                         <div class="section-heading">
                             <h2>智能体连接</h2>
                             <p>连接绑定到当前智能体，任务执行时可选择推送结果到 QQ、微信推送或 Webhook。</p>

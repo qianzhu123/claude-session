@@ -357,8 +357,29 @@ def cmd_quote(value):
     return '"' + str(value).replace('"', '\\"') + '"'
 
 
+def powershell_quote(value):
+    return '"' + str(value).replace("`", "``").replace('"', '`"') + '"'
+
+
 def schtasks_quote(value):
     return '"' + str(value).replace('"', '""') + '"'
+
+
+def same_path(left, right):
+    if not left or not right:
+        return False
+    return os.path.normcase(os.path.abspath(str(left))) == os.path.normcase(os.path.abspath(str(right)))
+
+
+def build_resume_command(project_path, session_id, home_path=None):
+    session_id = str(session_id or "").strip()
+    project_path = str(project_path or "").strip()
+    home_path = Path(home_path or Path.home())
+    if not session_id:
+        raise ValueError("session_id is required")
+    if not project_path or same_path(project_path, home_path):
+        return f"claude -r {session_id}"
+    return f"Set-Location -LiteralPath {powershell_quote(project_path)}; claude -r {session_id}"
 
 
 def build_task_command(params):
@@ -553,6 +574,193 @@ def build_agent_task_run_command(task):
     return f"cd /d {cmd_quote(project_root)} && {' '.join(claude_parts)}"
 
 
+def _as_list(value):
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _task_schedule_label(triggers):
+    labels = []
+    for trigger in _as_list(triggers):
+        if not isinstance(trigger, dict):
+            continue
+        start = trigger.get("StartBoundary") or trigger.get("startBoundary") or ""
+        if start:
+            labels.append(str(start).replace("T", " "))
+    return ", ".join(labels)
+
+
+def normalize_scheduled_task_record(record, project_root):
+    actions = _as_list(record.get("Actions") or record.get("actions"))
+    action = actions[0] if actions and isinstance(actions[0], dict) else {}
+    task_name = str(record.get("TaskName") or record.get("taskName") or "").strip()
+    task_path = str(record.get("TaskPath") or record.get("taskPath") or "\\").strip() or "\\"
+    return {
+        "id": f"external-{safe_name(task_name)}",
+        "source": "windows-scheduled-task",
+        "taskName": task_name,
+        "taskPath": task_path,
+        "state": str(record.get("State") or record.get("state") or ""),
+        "description": str(record.get("Description") or record.get("description") or ""),
+        "schedule": _task_schedule_label(record.get("Triggers") or record.get("triggers")),
+        "command": str(action.get("Execute") or action.get("execute") or ""),
+        "arguments": str(action.get("Arguments") or action.get("arguments") or ""),
+        "workingDirectory": str(action.get("WorkingDirectory") or action.get("workingDirectory") or project_root),
+        "lastRunTime": str(record.get("LastRunTime") or record.get("lastRunTime") or ""),
+        "nextRunTime": str(record.get("NextRunTime") or record.get("nextRunTime") or ""),
+        "lastTaskResult": record.get("LastTaskResult") if record.get("LastTaskResult") is not None else record.get("lastTaskResult", ""),
+        "controllable": True,
+    }
+
+
+def discover_windows_agent_tasks(project_root, runner=None):
+    project_root = str(project_root or "").strip()
+    if not project_root or os.name != "nt":
+        return []
+    runner = runner or subprocess.run
+    script = f"""
+$ProjectRoot = {powershell_quote(project_root)}
+$RootLower = $ProjectRoot.ToLowerInvariant()
+Get-ScheduledTask | Where-Object {{
+    $matched = $false
+    foreach ($action in $_.Actions) {{
+        $haystack = (($action.WorkingDirectory + ' ' + $action.Arguments) -as [string]).ToLowerInvariant()
+        if ($haystack.Contains($RootLower)) {{ $matched = $true }}
+    }}
+    $matched
+}} | ForEach-Object {{
+    $info = $null
+    try {{ $info = Get-ScheduledTaskInfo -TaskPath $_.TaskPath -TaskName $_.TaskName }} catch {{ }}
+    [pscustomobject]@{{
+        TaskName = $_.TaskName
+        TaskPath = $_.TaskPath
+        State = $_.State.ToString()
+        Description = $_.Description
+        Actions = @($_.Actions | ForEach-Object {{ [pscustomobject]@{{ Execute = $_.Execute; Arguments = $_.Arguments; WorkingDirectory = $_.WorkingDirectory }} }})
+        Triggers = @($_.Triggers | ForEach-Object {{ [pscustomobject]@{{ StartBoundary = $_.StartBoundary; Enabled = $_.Enabled }} }})
+        LastRunTime = if ($info -and $info.LastRunTime) {{ $info.LastRunTime.ToString('yyyy-MM-dd HH:mm:ss') }} else {{ '' }}
+        NextRunTime = if ($info -and $info.NextRunTime) {{ $info.NextRunTime.ToString('yyyy-MM-dd HH:mm:ss') }} else {{ '' }}
+        LastTaskResult = if ($info) {{ $info.LastTaskResult }} else {{ '' }}
+    }}
+}} | ConvertTo-Json -Depth 6 -Compress
+"""
+    try:
+        result = runner(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+    try:
+        records = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    return [
+        normalize_scheduled_task_record(item, project_root)
+        for item in _as_list(records)
+        if isinstance(item, dict) and (item.get("TaskName") or item.get("taskName"))
+    ]
+
+
+def build_windows_task_control_argv(task_name, action):
+    task_name = str(task_name or "").strip()
+    action = str(action or "").strip().lower()
+    if not task_name:
+        raise ValueError("taskName is required")
+    if action == "run":
+        return ["schtasks", "/Run", "/TN", task_name]
+    if action == "stop":
+        return ["schtasks", "/End", "/TN", task_name]
+    if action == "enable":
+        return ["schtasks", "/Change", "/TN", task_name, "/ENABLE"]
+    if action == "disable":
+        return ["schtasks", "/Change", "/TN", task_name, "/DISABLE"]
+    raise ValueError("action must be run, stop, enable, or disable")
+
+
+def control_windows_task(task_name, action, runner=None):
+    runner = runner or subprocess.run
+    argv = build_windows_task_control_argv(task_name, action)
+    result = runner(argv, capture_output=True, text=True, check=False)
+    return {
+        "taskName": task_name,
+        "action": action,
+        "command": " ".join(cmd_quote(part) if " " in part else part for part in argv),
+        "returnCode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "ok": result.returncode == 0,
+        "updatedAt": now_timestamp(),
+    }
+
+
+def _read_text_tail(path, max_chars=4000):
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return text[-max_chars:]
+
+
+def discover_agent_daily_plan(project_root):
+    project_root = Path(project_root) if project_root else Path()
+    plan_dir = project_root / "Agent_Daily_Plans"
+    result = {
+        "path": str(plan_dir),
+        "exists": plan_dir.exists(),
+        "planFiles": [],
+        "latestJson": None,
+        "latestMarkdown": "",
+        "qqTargets": {},
+        "logs": {},
+    }
+    if not plan_dir.exists():
+        return result
+
+    json_files = sorted(
+        [path for path in plan_dir.glob("*.json") if path.name != "qq_targets.json"],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    md_files = sorted(plan_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for path in (json_files + md_files)[:10]:
+        result["planFiles"].append({
+            "name": path.name,
+            "path": str(path),
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(path.stat().st_mtime)),
+            "size": path.stat().st_size,
+        })
+    for path in json_files:
+        if path.name == "qq_targets.json":
+            continue
+        try:
+            result["latestJson"] = json.loads(path.read_text(encoding="utf-8"))
+            result["latestJsonPath"] = str(path)
+            break
+        except json.JSONDecodeError:
+            continue
+    if md_files:
+        result["latestMarkdownPath"] = str(md_files[0])
+        result["latestMarkdown"] = _read_text_tail(md_files[0], max_chars=3000)
+    qq_targets = plan_dir / "qq_targets.json"
+    if qq_targets.exists():
+        try:
+            result["qqTargets"] = json.loads(qq_targets.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            result["qqTargets"] = {}
+    log_dir = plan_dir / "logs"
+    if log_dir.exists():
+        for log_file in sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]:
+            result["logs"][log_file.name] = _read_text_tail(log_file, max_chars=2000)
+    return result
+
+
 def save_agent_connection(params, path=None):
     connection_path = Path(path or AGENT_CONNECTIONS_PATH)
     agent_name = str(params.get("agentName", "")).strip()
@@ -596,19 +804,22 @@ def _filter_agent_records(records, agent_name, project_root):
     ]
 
 
-def load_agent_workspace(agent_name, project_root, task_path=None, connection_path=None, run_path=None):
+def load_agent_workspace(agent_name, project_root, task_path=None, connection_path=None, run_path=None, external_task_loader=None):
     agent_name = str(agent_name or "").strip()
     project_root = str(project_root or "").strip()
     tasks = read_json_file(Path(task_path or AGENT_TASKS_PATH), [])
     connections = read_json_file(Path(connection_path or AGENT_CONNECTIONS_PATH), [])
     runs = read_json_file(Path(run_path or AGENT_RUNS_PATH), [])
     filtered_connections = _filter_agent_records(connections if isinstance(connections, list) else [], agent_name, project_root)
+    external_task_loader = external_task_loader or discover_windows_agent_tasks
     return {
         "agentName": agent_name,
         "projectRoot": project_root,
         "tasks": _filter_agent_records(tasks if isinstance(tasks, list) else [], agent_name, project_root),
+        "externalTasks": external_task_loader(project_root),
         "connections": [sanitize_agent_connection(item) for item in filtered_connections],
         "runs": _filter_agent_records(runs if isinstance(runs, list) else [], agent_name, project_root),
+        "dailyPlan": discover_agent_daily_plan(project_root),
     }
 
 
@@ -1536,7 +1747,7 @@ def get_sessions_list(project_id):
             "fileSize": jsonl_file.stat().st_size,
             "projectId": project_id,
             "projectPath": project_path,
-            "resumeCommand": f"cd /d {cmd_quote(project_path)} && claude -r {session_id}",
+            "resumeCommand": build_resume_command(project_path, session_id),
         })
 
     return sessions
@@ -1731,6 +1942,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 append_json_record(TASKS_PATH, {"type": "agent-scheduler", **record})
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(record, 201 if result["created"] else 500)
+            elif path == "/api/external-agent-tasks/control":
+                result = control_windows_task(payload.get("taskName", ""), payload.get("action", ""))
+                self._json_response(result, 200 if result["ok"] else 500)
             else:
                 self._json_response({"error": "Not found"}, 404)
         except json.JSONDecodeError:

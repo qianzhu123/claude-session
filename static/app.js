@@ -89,6 +89,8 @@
     const selectedAgentPath = document.getElementById('selected-agent-path');
     const selectedAgentSummary = document.getElementById('selected-agent-summary');
     const agentTaskList = document.getElementById('agent-task-list');
+    const externalAgentTaskList = document.getElementById('external-agent-task-list');
+    const agentDailyPlanList = document.getElementById('agent-daily-plan-list');
     const agentConnectionList = document.getElementById('agent-connection-list');
     const saveAgentTaskBtn = document.getElementById('save-agent-task-btn');
     const createAgentSchedulerBtn = document.getElementById('create-agent-scheduler-btn');
@@ -231,6 +233,25 @@
         return `"${normalized.replace(/"/g, '\\"')}"`;
     }
 
+    function quotePowerShell(value) {
+        const normalized = String(value || '').trim();
+        if (!normalized) return '';
+        return `"${normalized.replace(/`/g, '``').replace(/"/g, '`"')}"`;
+    }
+
+    function normalizePath(value) {
+        return String(value || '').trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    }
+
+    function isDefaultHomePath(value) {
+        return normalizePath(value) === 'c:\\users\\light';
+    }
+
+    function withPowerShellLocation(cwd, command) {
+        if (!cwd || isDefaultHomePath(cwd)) return command;
+        return `Set-Location -LiteralPath ${quotePowerShell(cwd)}; ${command}`;
+    }
+
     function buildAgentCommand() {
         if (!generatedAgentCommand) return;
 
@@ -253,7 +274,7 @@
 
         let command = parts.join(' ');
         if (cwd) {
-            command = `cd /d ${quoteArg(cwd)} && ${command}`;
+            command = withPowerShellLocation(cwd, command);
         }
         generatedAgentCommand.textContent = command;
     }
@@ -405,17 +426,71 @@
     function renderAgentWorkspace(workspace) {
         if (!agentTaskList || !agentConnectionList) return;
         const tasks = workspace?.tasks || [];
+        const externalTasks = workspace?.externalTasks || [];
         const connections = workspace?.connections || [];
         renderResourceList(agentTaskList, tasks, '当前 Agent 尚未配置定时任务', item => `
             <strong>${escapeHtml(item.name || item.id)}</strong>
             <span>${escapeHtml(item.cron || '')} · ${escapeHtml(item.sessionPolicy || 'new')}</span>
             <code>${escapeHtml(item.prompt || '')}</code>
         `);
+        renderResourceList(externalAgentTaskList, externalTasks, '当前项目未发现关联的 Windows 计划任务', item => `
+            <strong>${escapeHtml(item.taskName || item.id)}</strong>
+            <span>${escapeHtml(item.state || '')} · ${escapeHtml(item.schedule || '')} · last=${escapeHtml(String(item.lastTaskResult ?? ''))}</span>
+            <code>${escapeHtml([item.command, item.arguments].filter(Boolean).join(' '))}</code>
+            <div class="button-row compact-actions">
+                <button class="btn-mini" data-external-task-action="run" data-external-task-name="${escapeHtml(item.taskName || '')}">运行</button>
+                <button class="btn-mini" data-external-task-action="stop" data-external-task-name="${escapeHtml(item.taskName || '')}">停止</button>
+                <button class="btn-mini" data-external-task-action="enable" data-external-task-name="${escapeHtml(item.taskName || '')}">启用</button>
+                <button class="btn-mini" data-external-task-action="disable" data-external-task-name="${escapeHtml(item.taskName || '')}">停用</button>
+            </div>
+        `);
+        renderDailyPlan(workspace?.dailyPlan);
         renderResourceList(agentConnectionList, connections, '当前 Agent 尚未配置连接', item => `
             <strong>${escapeHtml(item.name || item.id)}</strong>
             <span>${escapeHtml(item.type || '')} · ${item.tokenSet ? 'Token 已保存' : '无 Token'}</span>
             <code>${escapeHtml(item.endpoint || item.target || '')}</code>
         `);
+    }
+
+    function renderDailyPlan(plan) {
+        if (!agentDailyPlanList) return;
+        if (!plan?.exists) {
+            agentDailyPlanList.innerHTML = '<div class="resource-empty">未发现 Agent_Daily_Plans 目录</div>';
+            return;
+        }
+        const schedule = plan.latestJson?.schedule || {};
+        const rows = Object.entries(schedule).map(([key, item]) => ({
+            key,
+            time: item?.time || '',
+            title: item?.title || key,
+            task: item?.task || '',
+            note: item?.note || '',
+        }));
+        if (!rows.length) {
+            agentDailyPlanList.innerHTML = '<div class="resource-empty">已发现计划目录，但没有可读取的最新计划 JSON</div>';
+            return;
+        }
+        agentDailyPlanList.innerHTML = '';
+        rows.forEach(item => {
+            const row = document.createElement('div');
+            row.className = 'resource-row plan-row';
+            row.innerHTML = `
+                <strong>${escapeHtml(item.time)} ${escapeHtml(item.title)}</strong>
+                <span>${escapeHtml(item.key)}</span>
+                <code>${escapeHtml(item.task)}</code>
+                ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ''}
+            `;
+            agentDailyPlanList.appendChild(row);
+        });
+        if (plan.qqTargets && Object.keys(plan.qqTargets).length) {
+            const row = document.createElement('div');
+            row.className = 'resource-row';
+            row.innerHTML = `
+                <strong>QQ target</strong>
+                <code>${escapeHtml(JSON.stringify(plan.qqTargets))}</code>
+            `;
+            agentDailyPlanList.appendChild(row);
+        }
     }
 
     async function selectAgent(agent) {
@@ -659,7 +734,7 @@
 
             // Update resume command
             const sessionMeta = sessionsData.find(s => s.id === id);
-            resumeCmd.textContent = sessionMeta?.resumeCommand || `cd /d ${quoteArg(currentProjectPath)} && claude -r ${id}`;
+            resumeCmd.textContent = sessionMeta?.resumeCommand || withPowerShellLocation(currentProjectPath, `claude -r ${id}`);
             if (agentSessionId) {
                 agentSessionId.value = id;
                 if (agentMode) agentMode.value = 'resume';
@@ -956,6 +1031,51 @@
             description: agentButton.dataset.agentDescription || '',
         });
     });
+
+    document.addEventListener('click', async (e) => {
+        const taskButton = e.target.closest('[data-external-task-action]');
+        if (!taskButton) return;
+        const taskName = taskButton.dataset.externalTaskName || '';
+        const action = taskButton.dataset.externalTaskAction || '';
+        if (!taskName || !action) return;
+        if (!confirm(`将对 Windows 计划任务执行 ${action}：\n${taskName}`)) return;
+        try {
+            const result = await apiPost('/api/external-agent-tasks/control', { taskName, action });
+            showToast(result.ok ? `任务已执行：${action}` : `任务执行失败：${result.stderr || result.stdout || result.returnCode}`);
+            if (selectedAgent) {
+                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(selectedAgent.name)}&projectRoot=${encodeURIComponent(selectedAgent.projectRoot)}`);
+                renderAgentWorkspace(workspace);
+            }
+        } catch (err) {
+            showToast(`任务控制失败：${err.message}`);
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        const dot = e.target.closest('[data-section-target]');
+        if (!dot) return;
+        const section = document.getElementById(dot.dataset.sectionTarget);
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+
+    contentArea?.addEventListener('scroll', () => {
+        const sections = Array.from(document.querySelectorAll('.fullpage-section')).filter(section => getComputedStyle(section).display !== 'none');
+        if (!sections.length) return;
+        const contentRect = contentArea.getBoundingClientRect();
+        let activeId = sections[0].id;
+        let smallestOffset = Number.POSITIVE_INFINITY;
+        sections.forEach(section => {
+            const rect = section.getBoundingClientRect();
+            const offset = Math.abs(rect.top - contentRect.top);
+            if (offset < smallestOffset) {
+                smallestOffset = offset;
+                activeId = section.id;
+            }
+        });
+        document.querySelectorAll('.fullpage-dot').forEach(dot => {
+            dot.classList.toggle('active', dot.dataset.sectionTarget === activeId);
+        });
+    }, { passive: true });
 
     if (toggleLocalToolsBtn) {
         toggleLocalToolsBtn.addEventListener('click', () => {
