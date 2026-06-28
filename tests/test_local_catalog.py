@@ -231,6 +231,52 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertEqual(results[0]["repoUrl"], "https://github.com/example/pdf-skill")
         self.assertTrue(results[0]["installable"])
 
+    def test_skill_search_all_sources_deduplicates_installable_results(self):
+        def fake_fetcher(url):
+            if "api.github.com" in url:
+                return {
+                    "items": [
+                        {
+                            "name": "pdf-skill",
+                            "html_url": "https://github.com/example/pdf-skill",
+                            "description": "PDF from GitHub",
+                            "stargazers_count": 7,
+                        }
+                    ]
+                }
+            if "skills.sh" in url:
+                return {"results": [{"name": "pdf", "repo": "example/pdf-skill"}]}
+            if "clawhub.dev" in url:
+                return {"data": [{"name": "doc-pdf", "repoUrl": "https://github.com/example/doc-pdf"}]}
+            if "claude-plugins.com" in url:
+                return '<a href="https://github.com/example/pdf-skill">PDF Skill</a>'
+            return {}
+
+        results = server.search_skill_repositories("pdf", source="all", fetcher=fake_fetcher)
+        repo_urls = [item["repoUrl"] for item in results]
+
+        self.assertEqual(repo_urls.count("https://github.com/example/pdf-skill"), 1)
+        self.assertIn("https://github.com/example/doc-pdf", repo_urls)
+        self.assertTrue(all(item["installable"] for item in results))
+
+    def test_prompt_settings_support_global_and_session_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "prompt_settings.json"
+
+            global_settings = server.save_prompt_setting(
+                {"scope": "global", "prompt": "Always answer in Chinese."},
+                path=path,
+            )
+            session_settings = server.save_prompt_setting(
+                {"scope": "session", "sessionId": "abc123", "prompt": "Focus on tests."},
+                path=path,
+            )
+
+            self.assertEqual(global_settings["globalPrompt"], "Always answer in Chinese.")
+            self.assertEqual(session_settings["sessionPrompts"]["abc123"], "Focus on tests.")
+            self.assertEqual(server.effective_prompt("abc123", path=path), "Focus on tests.")
+            self.assertEqual(server.effective_prompt("missing", path=path), "Always answer in Chinese.")
+
     def test_organize_skill_bundle_moves_bundle_out_of_skills_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             claude_home = Path(tmp) / ".claude"
@@ -249,6 +295,13 @@ class LocalCatalogTests(unittest.TestCase):
 
         self.assertIn('id="back-home-btn"', html)
         self.assertIn("返回首页", html)
+
+    def test_home_page_uses_unified_skill_search_and_prompt_controls(self):
+        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertNotIn('id="skill-search-source"', html)
+        self.assertIn('id="prompt-scope"', html)
+        self.assertIn('id="save-prompt-btn"', html)
 
 
 if __name__ == "__main__":

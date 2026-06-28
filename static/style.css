@@ -958,12 +958,13 @@ body {
 
 .light-command,
 .coral-command {
-    margin: 0;
+    margin: var(--sp-md) 0 var(--sp-sm);
     padding: var(--sp-md);
     border-radius: var(--r-md);
     overflow-x: auto;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    min-height: 56px;
 }
 
 .light-command {
@@ -972,9 +973,13 @@ body {
 }
 
 .coral-command {
-    margin-top: var(--sp-md);
     background: rgba(255, 255, 255, 0.14);
     color: var(--colors-on-primary);
+}
+
+.light-command + .btn-mini,
+.coral-command + .btn-mini {
+    margin-top: var(--sp-xs);
 }
 
 .light-command code,
@@ -999,6 +1004,7 @@ body {
     flex-wrap: wrap;
     gap: var(--sp-sm);
     align-items: center;
+    margin-top: var(--sp-sm);
 }
 
 .search-results {

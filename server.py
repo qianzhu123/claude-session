@@ -31,6 +31,7 @@ CATALOG_PATH = DATA_DIR / "catalog.json"
 TASKS_PATH = DATA_DIR / "tasks.json"
 MCP_IMPORTS_PATH = DATA_DIR / "mcp_imports.json"
 SKILL_INSTALLS_PATH = DATA_DIR / "skill_installs.json"
+PROMPT_SETTINGS_PATH = DATA_DIR / "prompt_settings.json"
 
 
 def ensure_cache_dir():
@@ -294,6 +295,7 @@ def build_local_catalog(project_root=None, claude_dir=None, home_config=None):
         "tasks": read_json_file(TASKS_PATH, []),
         "mcpImports": read_json_file(MCP_IMPORTS_PATH, []),
         "skillInstalls": read_json_file(SKILL_INSTALLS_PATH, []),
+        "promptSettings": load_prompt_settings(),
         "counts": {
             "mcpServers": len(mcp_servers),
             "skills": len(skills),
@@ -570,6 +572,18 @@ def _installable_or_github_fallback(results, term, fetcher, source, link_url):
     return results or _catalog_link_result(source, term, link_url)
 
 
+def _dedupe_search_results(results):
+    deduped = []
+    seen = set()
+    for item in results:
+        key = item.get("repoUrl") or item.get("sourceUrl") or item.get("name")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def search_skill_repositories(query, source="github", fetcher=None):
     term = str(query or "").strip()
     if not term:
@@ -577,6 +591,16 @@ def search_skill_repositories(query, source="github", fetcher=None):
     fetcher = fetcher or public_url_fetcher
     source = str(source or "github").strip().lower()
     results = []
+
+    if source == "all":
+        combined = []
+        for current_source in ("github", "skills-sh", "clawhub", "claude-plugins"):
+            try:
+                combined.extend(search_skill_repositories(term, source=current_source, fetcher=fetcher))
+            except Exception:
+                continue
+        installable = [item for item in _dedupe_search_results(combined) if item.get("installable")]
+        return installable or _dedupe_search_results(combined)
 
     if source == "github":
         return _github_search_results(term, fetcher)
@@ -640,6 +664,53 @@ def search_skill_repositories(query, source="github", fetcher=None):
             return _installable_or_github_fallback([], term, fetcher, "claude-plugins", link_url)
 
     raise ValueError("Unsupported skill search source")
+
+
+def load_prompt_settings(path=None):
+    settings_path = Path(path or PROMPT_SETTINGS_PATH)
+    settings = read_json_file(settings_path, {"globalPrompt": "", "sessionPrompts": {}})
+    if not isinstance(settings, dict):
+        settings = {}
+    if not isinstance(settings.get("sessionPrompts"), dict):
+        settings["sessionPrompts"] = {}
+    settings["globalPrompt"] = str(settings.get("globalPrompt", ""))
+    return settings
+
+
+def write_prompt_settings(settings, path=None):
+    settings_path = Path(path or PROMPT_SETTINGS_PATH)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return settings
+
+
+def save_prompt_setting(params, path=None):
+    scope = str(params.get("scope", "global")).strip()
+    prompt = str(params.get("prompt", "")).strip()
+    settings = load_prompt_settings(path=path)
+    if scope == "global":
+        settings["globalPrompt"] = prompt
+    elif scope == "session":
+        session_id = str(params.get("sessionId", "")).strip()
+        if not session_id:
+            raise ValueError("sessionId is required for session prompt")
+        if prompt:
+            settings["sessionPrompts"][session_id] = prompt
+        else:
+            settings["sessionPrompts"].pop(session_id, None)
+    else:
+        raise ValueError("scope must be global or session")
+    return write_prompt_settings(settings, path=path)
+
+
+def effective_prompt(session_id="", path=None):
+    settings = load_prompt_settings(path=path)
+    session_id = str(session_id or "").strip()
+    if session_id and settings["sessionPrompts"].get(session_id):
+        return settings["sessionPrompts"][session_id]
+    return settings.get("globalPrompt", "")
 
 
 def create_agent_file(params, project_root=None, claude_dir=None):
@@ -918,6 +989,11 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(load_local_catalog(project_root=os.getcwd()))
         elif path == "/api/tasks":
             self._json_response(read_json_file(TASKS_PATH, []))
+        elif path == "/api/prompts":
+            session_id = params.get("session", [""])[0]
+            settings = load_prompt_settings()
+            settings["effectivePrompt"] = effective_prompt(session_id)
+            self._json_response(settings)
         elif path == "/api/sessions":
             project_id = params.get("project", [None])[0]
             if not project_id:
@@ -1003,6 +1079,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(result, 201)
             elif path == "/api/skills/search":
                 self._json_response({"results": search_skill_repositories(payload.get("query", ""), source=payload.get("source", "github"))})
+            elif path == "/api/prompts":
+                settings = save_prompt_setting(payload)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(settings, 201)
             elif path == "/api/agents":
                 record = create_agent_file(payload, project_root=Path(os.getcwd()), claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=os.getcwd())

@@ -165,9 +165,8 @@
                             <article class="control-panel">
                                 <h3>Skill 仓库安装</h3>
                                 <div class="form-grid">
-                                    <label><span>来源</span><select id="skill-search-source"><option value="github">GitHub</option><option value="skills-sh">skills.sh</option><option value="clawhub">ClawHub</option><option value="claude-plugins">claude-plugins</option></select></label>
-                                    <label><span>搜索 Skill</span><input id="skill-search-query" type="text" placeholder="例如 pdf、browser、testing"></label>
-                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开来源</button></label>
+                                    <label class="wide"><span>搜索 Skill 仓库</span><input id="skill-search-query" type="text" placeholder="自动搜索 GitHub、skills.sh、ClawHub、claude-plugins"></label>
+                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开仓库</button></label>
                                     <label><span>Skill 名称</span><input id="skill-name" type="text" placeholder="repo 名称可自动推断"></label>
                                     <label class="wide"><span>Git 仓库 URL</span><input id="skill-repo" type="text" placeholder="https://github.com/org/skill-repo.git"></label>
                                     <label class="wide"><span>本地 Bundle 路径</span><input id="skill-bundle-path" type="text" value="C:\Users\Light\.claude\skill-bundles\cherrystudio-skills"></label>
@@ -181,7 +180,37 @@
                                 </div>
                                 <pre class="light-command"><code id="skill-command"></code></pre>
                                 <button class="btn-mini" data-copy="#skill-command">复制 Skill 命令</button>
-                                <p class="fine-print" id="skill-action-result">搜索支持 GitHub、skills.sh、ClawHub 和 claude-plugins；只有返回 Git 仓库 URL 的结果才允许直接安装。</p>
+                                <p class="fine-print" id="skill-action-result">自动聚合 GitHub、skills.sh、ClawHub 和 claude-plugins；只有返回 Git 仓库 URL 的结果才允许直接安装。</p>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section class="workspace-section" id="prompt-settings-panel">
+                        <div class="section-heading">
+                            <h2>提示词设置</h2>
+                            <p>全局提示词会作为默认启动目标；当前会话提示词会覆盖全局值，并自动填入恢复会话命令。</p>
+                        </div>
+                        <div class="control-grid prompt-control-grid">
+                            <article class="control-panel">
+                                <h3>全局 / 当前会话</h3>
+                                <div class="form-grid">
+                                    <label><span>范围</span><select id="prompt-scope"><option value="global">全局默认</option><option value="session">当前会话</option></select></label>
+                                    <label><span>会话 ID</span><input id="prompt-session-id" type="text" placeholder="选择会话后自动填充"></label>
+                                    <label class="wide"><span>提示词</span><textarea id="prompt-setting-text" rows="5" placeholder="输入要保存并自动用于启动/恢复会话的提示词"></textarea></label>
+                                </div>
+                                <div class="button-row">
+                                    <button class="btn-secondary" id="save-prompt-btn">保存提示词</button>
+                                    <button class="btn-secondary" id="load-effective-prompt-btn">填入当前命令</button>
+                                </div>
+                                <p class="fine-print" id="prompt-setting-result">提示词保存在本地 data/prompt_settings.json。</p>
+                            </article>
+                            <article class="control-panel">
+                                <h3>当前生效</h3>
+                                <div class="resource-row prompt-preview">
+                                    <strong>Effective prompt</strong>
+                                    <span id="effective-prompt-label">未选择会话时使用全局默认。</span>
+                                    <code id="effective-prompt-preview"></code>
+                                </div>
                             </article>
                         </div>
                     </section>

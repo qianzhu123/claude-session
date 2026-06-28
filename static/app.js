@@ -11,6 +11,7 @@
     let sessionsData = [];
     let cacheHits = 0;
     let cacheMisses = 0;
+    let promptSettings = { globalPrompt: '', sessionPrompts: {} };
 
     // --- DOM refs ---
     const projectSelect = document.getElementById('project-select');
@@ -61,6 +62,14 @@
     const createAgentBtn = document.getElementById('create-agent-btn');
     const agentCreateResult = document.getElementById('agent-create-result');
     const backHomeBtn = document.getElementById('back-home-btn');
+    const promptScope = document.getElementById('prompt-scope');
+    const promptSessionId = document.getElementById('prompt-session-id');
+    const promptSettingText = document.getElementById('prompt-setting-text');
+    const savePromptBtn = document.getElementById('save-prompt-btn');
+    const loadEffectivePromptBtn = document.getElementById('load-effective-prompt-btn');
+    const promptSettingResult = document.getElementById('prompt-setting-result');
+    const effectivePromptLabel = document.getElementById('effective-prompt-label');
+    const effectivePromptPreview = document.getElementById('effective-prompt-preview');
 
     // --- API helpers ---
     async function api(url) {
@@ -225,6 +234,37 @@
         generatedAgentCommand.textContent = command;
     }
 
+    function getEffectivePrompt(sessionId = '') {
+        const sessionPrompt = sessionId && promptSettings.sessionPrompts
+            ? promptSettings.sessionPrompts[sessionId]
+            : '';
+        return sessionPrompt || promptSettings.globalPrompt || '';
+    }
+
+    function renderPromptSettings(sessionId = currentSessionId) {
+        if (promptSessionId) promptSessionId.value = sessionId || '';
+        const prompt = getEffectivePrompt(sessionId);
+        if (effectivePromptPreview) effectivePromptPreview.textContent = prompt;
+        if (effectivePromptLabel) {
+            effectivePromptLabel.textContent = sessionId && promptSettings.sessionPrompts?.[sessionId]
+                ? `当前会话 ${sessionId} 使用会话提示词。`
+                : '当前使用全局默认提示词。';
+        }
+        if (promptSettingText && promptSettingText.dataset.dirty !== 'true') {
+            promptSettingText.value = prompt;
+        }
+    }
+
+    function applyEffectivePrompt(sessionId = currentSessionId) {
+        const prompt = getEffectivePrompt(sessionId);
+        if (prompt && agentPrompt && (agentPrompt.dataset.autoPrompt === 'true' || !agentPrompt.value.trim())) {
+            agentPrompt.value = prompt;
+            agentPrompt.dataset.autoPrompt = 'true';
+            buildAgentCommand();
+        }
+        renderPromptSettings(sessionId);
+    }
+
     function showHome() {
         currentSessionId = '';
         document.querySelectorAll('.session-card').forEach(el => el.classList.remove('active'));
@@ -294,6 +334,11 @@
             const catalog = refresh
                 ? await apiPost('/api/local/refresh', {})
                 : await api('/api/local/catalog');
+            if (catalog.promptSettings) {
+                promptSettings = catalog.promptSettings;
+                renderPromptSettings();
+                applyEffectivePrompt();
+            }
             renderLocalCatalog(catalog);
             if (refresh) showToast('本地索引已刷新');
         } catch (e) {
@@ -450,6 +495,12 @@
             if (agentSessionId) {
                 agentSessionId.value = id;
                 if (agentMode) agentMode.value = 'resume';
+                if (promptSessionId) promptSessionId.value = id;
+                if (promptScope) promptScope.value = 'session';
+                if (agentPrompt?.dataset.autoPrompt === 'true' || !agentPrompt?.value.trim()) {
+                    agentPrompt.dataset.autoPrompt = 'true';
+                }
+                applyEffectivePrompt(id);
                 buildAgentCommand();
             }
 
@@ -556,6 +607,18 @@
             el.addEventListener('change', buildAgentCommand);
         }
     });
+
+    if (agentPrompt) {
+        agentPrompt.addEventListener('input', () => {
+            agentPrompt.dataset.autoPrompt = 'false';
+        });
+    }
+
+    if (promptSettingText) {
+        promptSettingText.addEventListener('input', () => {
+            promptSettingText.dataset.dirty = 'true';
+        });
+    }
 
     if (focusSearchBtn) {
         focusSearchBtn.addEventListener('click', () => {
@@ -675,7 +738,7 @@
             try {
                 const data = await apiPost('/api/skills/search', {
                     query: readValue('skill-search-query'),
-                    source: readValue('skill-search-source'),
+                    source: 'all',
                 });
                 if (!data.results || data.results.length === 0) {
                     skillSearchResults.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
@@ -781,6 +844,53 @@
                 loadLocalCatalog(true);
             } catch (e) {
                 showToast(`Agent 参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (savePromptBtn) {
+        savePromptBtn.addEventListener('click', async () => {
+            try {
+                const scope = readValue('prompt-scope') || 'global';
+                const result = await apiPost('/api/prompts', {
+                    scope,
+                    sessionId: readValue('prompt-session-id'),
+                    prompt: readValue('prompt-setting-text'),
+                });
+                promptSettings = result;
+                if (promptSettingText) promptSettingText.dataset.dirty = 'false';
+                renderPromptSettings(readValue('prompt-session-id') || currentSessionId);
+                applyEffectivePrompt(readValue('prompt-session-id') || currentSessionId);
+                if (promptSettingResult) promptSettingResult.textContent = '提示词已保存到本地 data/prompt_settings.json。';
+                showToast('提示词已保存');
+            } catch (e) {
+                showToast(`提示词保存失败：${e.message}`);
+            }
+        });
+    }
+
+    if (loadEffectivePromptBtn) {
+        loadEffectivePromptBtn.addEventListener('click', () => {
+            const prompt = getEffectivePrompt(readValue('prompt-session-id') || currentSessionId);
+            if (agentPrompt) {
+                agentPrompt.value = prompt;
+                agentPrompt.dataset.autoPrompt = 'false';
+                buildAgentCommand();
+            }
+            showToast('已填入当前命令提示词');
+        });
+    }
+
+    if (promptScope) {
+        promptScope.addEventListener('change', () => {
+            const scope = readValue('prompt-scope') || 'global';
+            const sessionId = readValue('prompt-session-id') || currentSessionId;
+            const prompt = scope === 'session'
+                ? (promptSettings.sessionPrompts?.[sessionId] || '')
+                : (promptSettings.globalPrompt || '');
+            if (promptSettingText) {
+                promptSettingText.value = prompt;
+                promptSettingText.dataset.dirty = 'false';
             }
         });
     }
