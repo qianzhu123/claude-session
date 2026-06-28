@@ -260,6 +260,23 @@ def scan_mcp_file(path, scope):
     return result
 
 
+def decode_project_id(project_id):
+    project_id = str(project_id or "").strip()
+    if not project_id:
+        return ""
+    return project_id.replace("--", ":\\").replace("-", "\\")
+
+
+def resolve_catalog_project_root(project_root="", project_id="", fallback=None):
+    manual_root = str(project_root or "").strip()
+    if manual_root:
+        return Path(manual_root).expanduser()
+    decoded = decode_project_id(project_id)
+    if decoded:
+        return Path(decoded)
+    return Path(fallback or os.getcwd())
+
+
 def build_local_catalog(project_root=None, claude_dir=None, home_config=None):
     project_root = Path(project_root or os.getcwd())
     if claude_dir is None:
@@ -1051,11 +1068,12 @@ def get_projects():
         if d.is_dir():
             # Convert directory name back to path
             # e.g. "C--Users-Light" -> "C:\Users\Light"
-            display_name = d.name.replace("--", ":").replace("-", os.sep)
+            display_name = decode_project_id(d.name)
             session_count = len(list(d.glob("*.jsonl")))
             projects.append({
                 "id": d.name,
                 "name": display_name,
+                "path": display_name,
                 "sessionCount": session_count
             })
     return projects
@@ -1288,7 +1306,17 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/projects":
             self._json_response(get_projects())
         elif path == "/api/local/catalog":
-            self._json_response(load_local_catalog(project_root=os.getcwd()))
+            requested_root = params.get("projectRoot", [""])[0]
+            requested_project = params.get("project", [""])[0]
+            if requested_root or requested_project:
+                project_root = resolve_catalog_project_root(
+                    project_root=requested_root,
+                    project_id=requested_project,
+                    fallback=os.getcwd(),
+                )
+                self._json_response(refresh_local_catalog(project_root=project_root))
+            else:
+                self._json_response(load_local_catalog(project_root=os.getcwd()))
         elif path == "/api/tasks":
             self._json_response(read_json_file(TASKS_PATH, []))
         elif path == "/api/prompts":
@@ -1327,7 +1355,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         try:
             payload = self._read_json_body()
             if path == "/api/local/refresh":
-                self._json_response(refresh_local_catalog(project_root=os.getcwd()))
+                project_root = resolve_catalog_project_root(
+                    project_root=payload.get("projectRoot", ""),
+                    project_id=payload.get("project", ""),
+                    fallback=os.getcwd(),
+                )
+                self._json_response(refresh_local_catalog(project_root=project_root))
             elif path == "/api/tasks":
                 command_type = payload.get("type", "schtasks")
                 command = build_loop_command(payload) if command_type == "loop" else build_task_command(payload)
@@ -1388,8 +1421,13 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(settings, 201)
             elif path == "/api/agents":
-                record = create_agent_file(payload, project_root=Path(os.getcwd()), claude_dir=CLAUDE_DIR)
-                refresh_local_catalog(project_root=os.getcwd())
+                project_root = resolve_catalog_project_root(
+                    project_root=payload.get("projectRoot", ""),
+                    project_id=payload.get("project", ""),
+                    fallback=os.getcwd(),
+                )
+                record = create_agent_file(payload, project_root=project_root, claude_dir=CLAUDE_DIR)
+                refresh_local_catalog(project_root=project_root)
                 self._json_response(record, 201)
             elif path == "/api/qq-push/profile":
                 record = save_qq_push_profile(payload)

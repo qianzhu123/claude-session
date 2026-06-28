@@ -40,6 +40,19 @@ class LocalCatalogTests(unittest.TestCase):
             self.assertEqual(catalog["agents"][0]["name"], "reviewer")
             self.assertEqual(catalog["commands"][0]["name"], "check")
 
+    def test_decode_project_id_resolves_claude_project_directory_name(self):
+        self.assertEqual(server.decode_project_id("D--code-myweb-English"), "D:\\code\\myweb\\English")
+        self.assertEqual(server.decode_project_id("C--Users-Light"), "C:\\Users\\Light")
+
+    def test_resolve_catalog_project_root_prefers_manual_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manual = Path(tmp) / "English"
+            manual.mkdir()
+
+            result = server.resolve_catalog_project_root(project_root=str(manual), project_id="C--Users-Light", fallback="D:\\fallback")
+
+            self.assertEqual(result, manual)
+
     def test_create_agent_file_writes_project_agent(self):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -310,6 +323,12 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertIn('id="qq-api-base-url"', html)
         self.assertIn('id="qq-payload-preset"', html)
         self.assertIn('id="qq-create-task-btn"', html)
+
+    def test_home_page_has_local_catalog_project_root_control(self):
+        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="catalog-project-root"', html)
+        self.assertIn('id="use-selected-project-root-btn"', html)
 
     def test_qq_push_profile_saves_secrets_locally_and_returns_sanitized_status(self):
         with tempfile.TemporaryDirectory() as tmp:

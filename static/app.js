@@ -7,6 +7,7 @@
 
     // --- State ---
     let currentProject = '';
+    let currentProjectPath = '';
     let currentSessionId = '';
     let sessionsData = [];
     let cacheHits = 0;
@@ -40,6 +41,8 @@
     const agentPrompt = document.getElementById('agent-prompt');
     const generatedAgentCommand = document.getElementById('generated-agent-command');
     const refreshLocalBtn = document.getElementById('refresh-local-btn');
+    const catalogProjectRoot = document.getElementById('catalog-project-root');
+    const useSelectedProjectRootBtn = document.getElementById('use-selected-project-root-btn');
     const catalogUpdated = document.getElementById('catalog-updated');
     const localSummary = document.getElementById('local-summary');
     const mcpList = document.getElementById('mcp-list');
@@ -409,11 +412,16 @@
         `);
     }
 
+    function currentCatalogRoot() {
+        return readValue('catalog-project-root') || currentProjectPath || '';
+    }
+
     async function loadLocalCatalog(refresh = false) {
         try {
+            const projectRoot = currentCatalogRoot();
             const catalog = refresh
-                ? await apiPost('/api/local/refresh', {})
-                : await api('/api/local/catalog');
+                ? await apiPost('/api/local/refresh', { project: currentProject, projectRoot })
+                : await api(`/api/local/catalog?project=${encodeURIComponent(currentProject)}&projectRoot=${encodeURIComponent(projectRoot)}`);
             if (catalog.promptSettings) {
                 promptSettings = catalog.promptSettings;
                 renderPromptSettings();
@@ -423,6 +431,9 @@
                 renderQqPushSummary(catalog.qqPush);
             }
             renderLocalCatalog(catalog);
+            if (catalogProjectRoot && catalog.projectRoot) {
+                catalogProjectRoot.value = catalog.projectRoot;
+            }
             if (refresh) showToast('本地索引已刷新');
         } catch (e) {
             console.error('Failed to load local catalog:', e);
@@ -470,13 +481,19 @@
             projects.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
+                opt.dataset.path = p.path || p.name || '';
                 opt.textContent = `${p.name} (${p.sessionCount})`;
                 projectSelect.appendChild(opt);
             });
 
             // Auto-select first project
             currentProject = projects[0].id;
+            currentProjectPath = projects[0].path || projects[0].name || '';
             projectSelect.value = currentProject;
+            if (catalogProjectRoot && !catalogProjectRoot.value.trim()) {
+                catalogProjectRoot.value = currentProjectPath;
+            }
+            loadLocalCatalog(true);
             loadSessions();
         } catch (e) {
             console.error('Failed to load projects:', e);
@@ -915,6 +932,8 @@
         createAgentBtn.addEventListener('click', async () => {
             try {
                 const result = await apiPost('/api/agents', {
+                    project: currentProject,
+                    projectRoot: currentCatalogRoot(),
                     scope: readValue('create-agent-scope'),
                     name: readValue('create-agent-name'),
                     description: readValue('create-agent-description'),
@@ -1052,11 +1071,29 @@
     // --- Event listeners ---
     projectSelect.addEventListener('change', () => {
         currentProject = projectSelect.value;
+        currentProjectPath = projectSelect.selectedOptions[0]?.dataset.path || '';
+        if (catalogProjectRoot) {
+            catalogProjectRoot.value = currentProjectPath;
+        }
         currentSessionId = '';
         conversationView.style.display = 'none';
         welcomeState.style.display = 'flex';
+        loadLocalCatalog(true);
         loadSessions();
     });
+
+    if (useSelectedProjectRootBtn) {
+        useSelectedProjectRootBtn.addEventListener('click', () => {
+            if (catalogProjectRoot) {
+                catalogProjectRoot.value = currentProjectPath;
+            }
+            loadLocalCatalog(true);
+        });
+    }
+
+    if (catalogProjectRoot) {
+        catalogProjectRoot.addEventListener('change', () => loadLocalCatalog(true));
+    }
 
     refreshBtn.addEventListener('click', () => {
         loadSessions();
