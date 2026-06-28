@@ -84,17 +84,10 @@
                         </div>
                         <div class="code-window-card" id="agent-command-builder">
                             <div class="code-window-header">
-                                <span>launch / resume command</span>
+                                <span>launch command</span>
                                 <span class="status-dot"></span>
                             </div>
                             <div class="builder-grid">
-                                <label>
-                                    <span>模式</span>
-                                    <select id="agent-mode">
-                                        <option value="start">启动新会话</option>
-                                        <option value="resume">恢复指定会话</option>
-                                    </select>
-                                </label>
                                 <label>
                                     <span>权限</span>
                                     <select id="agent-permission">
@@ -103,10 +96,6 @@
                                         <option value="plan">计划模式</option>
                                         <option value="bypassPermissions">跳过权限确认</option>
                                     </select>
-                                </label>
-                                <label class="wide">
-                                    <span>会话 ID</span>
-                                    <input id="agent-session-id" type="text" placeholder="选择左侧会话后自动填充，也可手动输入">
                                 </label>
                                 <label class="wide">
                                     <span>工作目录</span>
@@ -118,7 +107,7 @@
                                 </label>
                             </div>
                             <pre class="generated-command"><code id="generated-agent-command">claude</code></pre>
-                            <p class="command-note">命令只根据表单内容生成；复制后由你在终端执行。</p>
+                            <p class="command-note">首页只生成启动新会话命令；恢复命令在进入具体会话后显示。</p>
                         </div>
                     </div>
 
@@ -182,9 +171,11 @@
                             <article class="control-panel dark-control">
                                 <h3>创建 Agent 定时任务</h3>
                                 <div class="form-grid">
+                                    <input id="agent-task-id" type="hidden">
                                     <label><span>任务名称</span><input id="agent-task-name" type="text" placeholder="Daily English Plan"></label>
                                     <label><span>Cron</span><input id="agent-task-cron" type="text" value="30 7 * * *"></label>
                                     <label><span>会话策略</span><select id="agent-task-session-policy"><option value="new">每天新建会话</option><option value="resume">恢复指定会话</option></select></label>
+                                    <label><span>状态</span><select id="agent-task-enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
                                     <label><span>恢复会话 ID</span><input id="agent-task-resume-session" type="text" placeholder="仅恢复会话时需要"></label>
                                     <label class="wide"><span>任务目标</span><textarea id="agent-task-prompt" rows="4" placeholder="输入这个智能体定时执行的目标"></textarea></label>
                                 </div>
@@ -210,18 +201,22 @@
                             <article class="control-panel">
                                 <h3>新增连接</h3>
                                 <div class="form-grid">
+                                    <input id="agent-connection-id" type="hidden">
                                     <label><span>名称</span><input id="agent-connection-name" type="text" placeholder="qq-main"></label>
-                                    <label><span>类型</span><select id="agent-connection-type"><option value="qq-onebot">QQ OneBot / NapCat</option><option value="wechat-pushplus">微信 PushPlus</option><option value="wechat-serverchan">微信 ServerChan</option><option value="webhook">通用 Webhook</option></select></label>
+                                    <label><span>类型</span><select id="agent-connection-type"><option value="qq-openapi">QQ 官方机器人 AppID/Secret</option><option value="qq-onebot">QQ OneBot / NapCat</option><option value="wechat-pushplus">微信 PushPlus</option><option value="wechat-serverchan">微信 ServerChan</option><option value="webhook">通用 Webhook</option></select></label>
+                                    <label><span>App ID</span><input id="agent-connection-app-id" type="text" placeholder="QQ 机器人 AppID"></label>
+                                    <label><span>Client Secret</span><input id="agent-connection-app-secret" type="password" autocomplete="off" placeholder="留空则保留已保存 Secret"></label>
                                     <label class="wide"><span>Endpoint</span><input id="agent-connection-endpoint" type="url" placeholder="http://127.0.0.1:3000/send_group_msg"></label>
+                                    <label><span>目标类型</span><select id="agent-connection-target-type"><option value="group">QQ群</option><option value="user">单聊</option><option value="channel">频道</option><option value="webhook">Webhook</option></select></label>
                                     <label><span>目标</span><input id="agent-connection-target" type="text" placeholder="group:123456"></label>
-                                    <label><span>Token</span><input id="agent-connection-token" type="password" autocomplete="off" placeholder="只保存到本地 data"></label>
+                                    <label><span>Token</span><input id="agent-connection-token" type="password" autocomplete="off" placeholder="OneBot/Webhook 可选，留空保留"></label>
                                 </div>
                                 <button class="btn-secondary" id="save-agent-connection-btn">保存连接</button>
                             </article>
                         </div>
                     </section>
 
-                    <section class="workspace-section secondary-tools is-collapsed" id="mcp-skill-manager">
+                    <section class="workspace-section" id="mcp-skill-manager">
                         <div class="section-heading">
                             <h2>MCP 与 Skill</h2>
                             <p>MCP 支持粘贴 JSON 生成 <code>add-json</code> 命令；Skill 先支持 Git 仓库安装命令和本地索引。</p>
@@ -336,7 +331,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section split-section agent-gated is-locked secondary-tools is-collapsed" id="automation-agent-patterns">
+                    <section class="workspace-section split-section secondary-tools is-collapsed" id="automation-agent-patterns">
                         <div class="callout-card-coral">
                             <h2>定时任务</h2>
                             <div class="form-grid pale-form">
@@ -360,6 +355,7 @@
                         <div class="product-mockup-card-dark">
                             <h2>创建 Agent</h2>
                             <div class="form-grid">
+                                <input id="create-agent-path" type="hidden">
                                 <label><span>作用域</span><select id="create-agent-scope"><option value="project">项目</option><option value="user">用户</option></select></label>
                                 <label><span>名称</span><input id="create-agent-name" type="text" placeholder="qa-reviewer"></label>
                                 <label class="wide"><span>描述</span><input id="create-agent-description" type="text" placeholder="何时应调用这个 agent"></label>
@@ -367,7 +363,10 @@
                                 <label><span>工具</span><select id="create-agent-tools"><option value="">默认工具</option><option value="Read, Grep, Glob">只读检索</option><option value="Read, Grep, Glob, Bash">检索 + Bash</option><option value="Read, Grep, Glob, Edit, Bash">编辑 + Bash</option><option value="*">全部工具</option></select></label>
                                 <label class="wide"><span>系统提示词</span><textarea id="create-agent-prompt" rows="5" placeholder="输入这个 agent 的完整职责和边界"></textarea></label>
                             </div>
-                            <button class="btn-secondary-on-dark" id="create-agent-btn">创建 Agent 文件</button>
+                            <div class="button-row">
+                                <button class="btn-secondary-on-dark" id="create-agent-btn">创建 Agent 文件</button>
+                                <button class="btn-secondary-on-dark" id="update-agent-btn">保存 Agent 修改</button>
+                            </div>
                             <p class="command-note" id="agent-create-result">Agent 会写入本地 .claude/agents 或用户 agents 目录。</p>
                         </div>
                     </section>

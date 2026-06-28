@@ -35,9 +35,7 @@
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toast-msg');
     const focusSearchBtn = document.getElementById('focus-search-btn');
-    const agentMode = document.getElementById('agent-mode');
     const agentPermission = document.getElementById('agent-permission');
-    const agentSessionId = document.getElementById('agent-session-id');
     const agentCwd = document.getElementById('agent-cwd');
     const agentPrompt = document.getElementById('agent-prompt');
     const generatedAgentCommand = document.getElementById('generated-agent-command');
@@ -64,6 +62,7 @@
     const createTaskBtn = document.getElementById('create-task-btn');
     const taskCommand = document.getElementById('task-command');
     const createAgentBtn = document.getElementById('create-agent-btn');
+    const updateAgentBtn = document.getElementById('update-agent-btn');
     const agentCreateResult = document.getElementById('agent-create-result');
     const backHomeBtn = document.getElementById('back-home-btn');
     const promptScope = document.getElementById('prompt-scope');
@@ -255,16 +254,11 @@
     function buildAgentCommand() {
         if (!generatedAgentCommand) return;
 
-        const mode = agentMode?.value || 'start';
         const permission = agentPermission?.value || 'default';
-        const sessionId = agentSessionId?.value.trim() || '<session-id>';
         const cwd = agentCwd?.value.trim();
         const prompt = agentPrompt?.value.trim();
 
         const parts = ['claude'];
-        if (mode === 'resume') {
-            parts.push('-r', sessionId);
-        }
         if (permission !== 'default') {
             parts.push('--permission-mode', permission);
         }
@@ -326,6 +320,29 @@
     function setValue(id, value) {
         const el = document.getElementById(id);
         if (el && value !== undefined && value !== null) el.value = value;
+    }
+
+    function encodeData(value) {
+        return encodeURIComponent(JSON.stringify(value || {}));
+    }
+
+    function decodeData(value) {
+        try {
+            return JSON.parse(decodeURIComponent(value || '%7B%7D'));
+        } catch {
+            return {};
+        }
+    }
+
+    function clearSelectedAgent() {
+        selectedAgent = null;
+        setAgentGatedVisible(false);
+        if (selectedAgentName) selectedAgentName.textContent = '未选择 Agent';
+        if (selectedAgentPath) selectedAgentPath.textContent = '';
+        if (selectedAgentSummary) selectedAgentSummary.textContent = '选择一个 Agent 后，才能配置它的定时任务、QQ/微信连接和运行记录。';
+        [agentTaskList, externalAgentTaskList, agentDailyPlanList, agentConnectionList].forEach(container => {
+            if (container) container.innerHTML = '';
+        });
     }
 
     function selectedQqModel() {
@@ -428,10 +445,27 @@
         const tasks = workspace?.tasks || [];
         const externalTasks = workspace?.externalTasks || [];
         const connections = workspace?.connections || [];
+        const detectedConnections = [];
+        const qqTargets = workspace?.dailyPlan?.qqTargets || {};
+        if (qqTargets && Object.keys(qqTargets).length) {
+            const detectedTarget = qqTargets.group || qqTargets.user || qqTargets.channel || qqTargets.last?.target_id || '';
+            const detectedType = qqTargets.group ? 'group' : (qqTargets.user ? 'user' : (qqTargets.channel ? 'channel' : (qqTargets.last?.target_type || 'group')));
+            detectedConnections.push({
+                id: 'detected-qq-openapi',
+                name: '已检测 QQ OpenAPI 连接',
+                type: 'qq-openapi',
+                targetType: detectedType,
+                target: detectedTarget,
+                source: 'Agent_Daily_Plans/qq_targets.json',
+                tokenSet: false,
+                appSecretSet: false,
+            });
+        }
         renderResourceList(agentTaskList, tasks, '当前 Agent 尚未配置定时任务', item => `
             <strong>${escapeHtml(item.name || item.id)}</strong>
-            <span>${escapeHtml(item.cron || '')} · ${escapeHtml(item.sessionPolicy || 'new')}</span>
+            <span>${escapeHtml(item.cron || '')} · ${escapeHtml(item.sessionPolicy || 'new')} · ${item.enabled === false ? '停用' : '启用'}</span>
             <code>${escapeHtml(item.prompt || '')}</code>
+            <button class="btn-mini" data-edit-agent-task="${escapeHtml(encodeData(item))}">编辑</button>
         `);
         renderResourceList(externalAgentTaskList, externalTasks, '当前项目未发现关联的 Windows 计划任务', item => `
             <strong>${escapeHtml(item.taskName || item.id)}</strong>
@@ -445,10 +479,12 @@
             </div>
         `);
         renderDailyPlan(workspace?.dailyPlan);
-        renderResourceList(agentConnectionList, connections, '当前 Agent 尚未配置连接', item => `
+        renderResourceList(agentConnectionList, [...detectedConnections, ...connections], '当前 Agent 尚未配置连接', item => `
             <strong>${escapeHtml(item.name || item.id)}</strong>
-            <span>${escapeHtml(item.type || '')} · ${item.tokenSet ? 'Token 已保存' : '无 Token'}</span>
+            <span>${escapeHtml(item.type || '')} · ${escapeHtml(item.targetType || '')} · ${item.appSecretSet ? 'Secret 已保存' : '未保存 Secret'} · ${item.tokenSet ? 'Token 已保存' : '无 Token'}</span>
             <code>${escapeHtml(item.endpoint || item.target || '')}</code>
+            ${item.source ? `<span>${escapeHtml(item.source)}</span>` : ''}
+            <button class="btn-mini" data-edit-agent-connection="${escapeHtml(encodeData(item))}">编辑</button>
         `);
     }
 
@@ -516,6 +552,38 @@
         document.getElementById('selected-agent-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    function fillAgentTaskForm(item) {
+        setValue('agent-task-id', item.id || '');
+        setValue('agent-task-name', item.name || '');
+        setValue('agent-task-cron', item.cron || '30 7 * * *');
+        setValue('agent-task-session-policy', item.sessionPolicy || 'new');
+        setValue('agent-task-enabled', item.enabled === false ? 'false' : 'true');
+        setValue('agent-task-resume-session', item.resumeSessionId || '');
+        setValue('agent-task-prompt', item.prompt || '');
+    }
+
+    function fillAgentConnectionForm(item) {
+        setValue('agent-connection-id', item.id === 'detected-qq-openapi' ? '' : (item.id || ''));
+        setValue('agent-connection-name', item.name || '');
+        setValue('agent-connection-type', item.type || 'qq-openapi');
+        setValue('agent-connection-app-id', item.appId || '');
+        setValue('agent-connection-app-secret', '');
+        setValue('agent-connection-endpoint', item.endpoint || '');
+        setValue('agent-connection-target-type', item.targetType || 'group');
+        setValue('agent-connection-target', item.target || '');
+        setValue('agent-connection-token', '');
+    }
+
+    function fillAgentEditor(agent) {
+        setValue('create-agent-path', agent.path || '');
+        setValue('create-agent-name', agent.name || '');
+        setValue('create-agent-description', agent.description || '');
+        setValue('create-agent-model', agent.model || '');
+        setValue('create-agent-tools', agent.tools || '');
+        setValue('create-agent-prompt', agent.prompt || '');
+        if (agentCreateResult) agentCreateResult.textContent = agent.path ? `正在编辑：${agent.path}` : 'Agent 会写入本地 .claude/agents 或用户 agents 目录。';
+    }
+
     function renderLocalCatalog(catalog) {
         if (!catalog || !catalog.counts) return;
         const counts = catalog.counts;
@@ -545,6 +613,7 @@
             <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
             <code>${escapeHtml(item.path || '')}</code>
             <button class="btn-mini" data-select-agent="${escapeHtml(item.name)}" data-agent-path="${escapeHtml(item.path || '')}" data-agent-scope="${escapeHtml(item.scope || '')}" data-agent-description="${escapeHtml(item.description || '')}">选择</button>
+            <button class="btn-mini" data-edit-agent-path="${escapeHtml(item.path || '')}">编辑文件</button>
         `);
         renderResourceList(commandList, catalog.commands, '未发现本地 slash command', item => `
             <strong>/${escapeHtml(item.name)}</strong>
@@ -709,6 +778,7 @@
     // --- Select session ---
     async function selectSession(id) {
         currentSessionId = id;
+        clearSelectedAgent();
 
         // Update active state
         document.querySelectorAll('.session-card').forEach(el => {
@@ -735,17 +805,12 @@
             // Update resume command
             const sessionMeta = sessionsData.find(s => s.id === id);
             resumeCmd.textContent = sessionMeta?.resumeCommand || withPowerShellLocation(currentProjectPath, `claude -r ${id}`);
-            if (agentSessionId) {
-                agentSessionId.value = id;
-                if (agentMode) agentMode.value = 'resume';
-                if (promptSessionId) promptSessionId.value = id;
-                if (promptScope) promptScope.value = 'session';
-                if (agentPrompt?.dataset.autoPrompt === 'true' || !agentPrompt?.value.trim()) {
-                    agentPrompt.dataset.autoPrompt = 'true';
-                }
-                applyEffectivePrompt(id);
-                buildAgentCommand();
+            if (promptSessionId) promptSessionId.value = id;
+            if (promptScope) promptScope.value = 'session';
+            if (agentPrompt?.dataset.autoPrompt === 'true' || !agentPrompt?.value.trim()) {
+                agentPrompt.dataset.autoPrompt = 'true';
             }
+            applyEffectivePrompt(id);
 
             // Render messages
             renderMessages(data.messages);
@@ -844,7 +909,7 @@
         }
     });
 
-    [agentMode, agentPermission, agentSessionId, agentCwd, agentPrompt].forEach(el => {
+    [agentPermission, agentCwd, agentPrompt].forEach(el => {
         if (el) {
             el.addEventListener('input', buildAgentCommand);
             el.addEventListener('change', buildAgentCommand);
@@ -1033,6 +1098,36 @@
     });
 
     document.addEventListener('click', async (e) => {
+        const editButton = e.target.closest('[data-edit-agent-path]');
+        if (!editButton) return;
+        const path = editButton.dataset.editAgentPath || '';
+        if (!path) return;
+        try {
+            const agent = await api(`/api/agent-file?path=${encodeURIComponent(path)}`);
+            fillAgentEditor(agent);
+            document.querySelectorAll('.secondary-tools').forEach(section => section.classList.remove('is-collapsed'));
+            if (toggleLocalToolsBtn) toggleLocalToolsBtn.textContent = '隐藏本地工具';
+            document.getElementById('automation-agent-patterns')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } catch (err) {
+            showToast(`读取 Agent 文件失败：${err.message}`);
+        }
+    });
+
+    document.addEventListener('click', (e) => {
+        const taskButton = e.target.closest('[data-edit-agent-task]');
+        if (!taskButton) return;
+        fillAgentTaskForm(decodeData(taskButton.dataset.editAgentTask));
+        showToast('已填入 Agent 任务表单');
+    });
+
+    document.addEventListener('click', (e) => {
+        const connectionButton = e.target.closest('[data-edit-agent-connection]');
+        if (!connectionButton) return;
+        fillAgentConnectionForm(decodeData(connectionButton.dataset.editAgentConnection));
+        showToast('已填入连接表单；Secret/Token 不会回显');
+    });
+
+    document.addEventListener('click', async (e) => {
         const taskButton = e.target.closest('[data-external-task-action]');
         if (!taskButton) return;
         const taskName = taskButton.dataset.externalTaskName || '';
@@ -1079,7 +1174,7 @@
 
     if (toggleLocalToolsBtn) {
         toggleLocalToolsBtn.addEventListener('click', () => {
-            const collapsed = document.querySelector('#mcp-skill-manager')?.classList.contains('is-collapsed');
+            const collapsed = document.querySelector('#prompt-settings-panel')?.classList.contains('is-collapsed');
             document.querySelectorAll('.secondary-tools').forEach(section => {
                 section.classList.toggle('is-collapsed', !collapsed);
             });
@@ -1159,19 +1254,42 @@
         });
     }
 
+    if (updateAgentBtn) {
+        updateAgentBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/agents/update', {
+                    projectRoot: currentCatalogRoot(),
+                    path: readValue('create-agent-path'),
+                    name: readValue('create-agent-name'),
+                    description: readValue('create-agent-description'),
+                    model: readValue('create-agent-model'),
+                    tools: readValue('create-agent-tools'),
+                    prompt: readValue('create-agent-prompt'),
+                });
+                if (agentCreateResult) agentCreateResult.textContent = `已保存：${result.path}`;
+                showToast('Agent 文件已更新');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Agent 修改失败：${e.message}`);
+            }
+        });
+    }
+
     if (saveAgentTaskBtn) {
         saveAgentTaskBtn.addEventListener('click', async () => {
             try {
                 const base = agentPayloadBase();
                 const result = await apiPost('/api/agent-tasks', {
                     ...base,
+                    id: readValue('agent-task-id'),
                     name: readValue('agent-task-name'),
                     cron: readValue('agent-task-cron'),
                     sessionPolicy: readValue('agent-task-session-policy') || 'new',
                     resumeSessionId: readValue('agent-task-resume-session'),
                     prompt: readValue('agent-task-prompt'),
-                    enabled: true,
+                    enabled: readValue('agent-task-enabled') !== 'false',
                 });
+                setValue('agent-task-id', result.id || '');
                 showToast(`Agent 任务已保存：${result.name}`);
                 const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
                 renderAgentWorkspace(workspace);
@@ -1203,12 +1321,17 @@
                 const base = agentPayloadBase();
                 const result = await apiPost('/api/agent-connections', {
                     ...base,
+                    id: readValue('agent-connection-id'),
                     name: readValue('agent-connection-name'),
                     type: readValue('agent-connection-type'),
+                    appId: readValue('agent-connection-app-id'),
+                    appSecret: readValue('agent-connection-app-secret'),
                     endpoint: readValue('agent-connection-endpoint'),
+                    targetType: readValue('agent-connection-target-type'),
                     target: readValue('agent-connection-target'),
                     token: readValue('agent-connection-token'),
                 });
+                setValue('agent-connection-id', result.id || '');
                 showToast(`连接已保存：${result.name}`);
                 const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
                 renderAgentWorkspace(workspace);
@@ -1340,6 +1463,7 @@
     projectSelect.addEventListener('change', () => {
         currentProject = projectSelect.value;
         currentProjectPath = projectSelect.selectedOptions[0]?.dataset.path || '';
+        clearSelectedAgent();
         if (catalogProjectRoot) {
             catalogProjectRoot.value = currentProjectPath;
         }
@@ -1360,7 +1484,10 @@
     }
 
     if (catalogProjectRoot) {
-        catalogProjectRoot.addEventListener('change', () => loadLocalCatalog(true));
+        catalogProjectRoot.addEventListener('change', () => {
+            clearSelectedAgent();
+            loadLocalCatalog(true);
+        });
     }
 
     refreshBtn.addEventListener('click', () => {

@@ -76,6 +76,44 @@ class LocalCatalogTests(unittest.TestCase):
             self.assertIn("description: Checks regressions", text)
             self.assertIn("Review the changed files.", text)
 
+    def test_read_and_update_agent_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            result = server.create_agent_file(
+                {
+                    "scope": "project",
+                    "name": "english-learning-agent",
+                    "description": "Old description",
+                    "model": "sonnet",
+                    "tools": "Read, Grep",
+                    "prompt": "Old prompt.",
+                },
+                project_root=project,
+                claude_dir=project / "home" / ".claude",
+            )
+
+            loaded = server.read_agent_file(result["path"])
+            self.assertEqual(loaded["name"], "english-learning-agent")
+            self.assertEqual(loaded["model"], "sonnet")
+            self.assertEqual(loaded["tools"], "Read, Grep")
+            self.assertEqual(loaded["prompt"], "Old prompt.")
+
+            updated = server.update_agent_file(
+                {
+                    "path": result["path"],
+                    "name": "english-learning-agent",
+                    "description": "New description",
+                    "model": "opus",
+                    "tools": "Read, Grep, Bash",
+                    "prompt": "New prompt.",
+                }
+            )
+
+            self.assertEqual(updated["model"], "opus")
+            text = Path(result["path"]).read_text(encoding="utf-8")
+            self.assertIn("model: opus", text)
+            self.assertIn("New prompt.", text)
+
     def test_task_command_is_generated_from_parameters(self):
         command = server.build_task_command(
             {
@@ -562,9 +600,35 @@ class LocalCatalogTests(unittest.TestCase):
 
             self.assertEqual(record["name"], "qq-main")
             self.assertTrue(record["tokenSet"])
+            self.assertFalse(record["appSecretSet"])
             self.assertNotIn("secret-token", json.dumps(record))
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(saved[0]["token"], "secret-token")
+
+    def test_agent_connection_saves_qq_app_credentials_safely(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent_connections.json"
+
+            record = server.save_agent_connection(
+                {
+                    "agentName": "english-learning-agent",
+                    "projectRoot": "D:\\code\\myweb\\English",
+                    "name": "qq-openapi",
+                    "type": "qq-openapi",
+                    "appId": "1024",
+                    "appSecret": "secret-value",
+                    "targetType": "group",
+                    "target": "group-openid",
+                },
+                path=path,
+            )
+
+            self.assertEqual(record["appId"], "1024")
+            self.assertEqual(record["targetType"], "group")
+            self.assertTrue(record["appSecretSet"])
+            self.assertNotIn("secret-value", json.dumps(record))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["appSecret"], "secret-value")
 
     def test_cron_matches_due_minute(self):
         self.assertTrue(server.cron_matches("30 7 * * *", (2026, 6, 28, 7, 30)))

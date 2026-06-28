@@ -512,7 +512,9 @@ def create_agent_scheduler_task(params=None, runner=None):
 def sanitize_agent_connection(record):
     clean = dict(record)
     clean.pop("token", None)
+    clean.pop("appSecret", None)
     clean["tokenSet"] = bool(record.get("token"))
+    clean["appSecretSet"] = bool(record.get("appSecret"))
     return clean
 
 
@@ -785,6 +787,9 @@ def save_agent_connection(params, path=None):
         "type": connection_type,
         "endpoint": endpoint,
         "target": target,
+        "targetType": str(params.get("targetType", "")).strip(),
+        "appId": str(params.get("appId", "")).strip() or (existing.get("appId", "") if existing else ""),
+        "appSecret": str(params.get("appSecret", "")).strip() or (existing.get("appSecret", "") if existing else ""),
         "token": str(params.get("token", "")).strip() or (existing.get("token", "") if existing else ""),
         "createdAt": existing.get("createdAt") if existing else now_timestamp(),
         "updatedAt": now_timestamp(),
@@ -1489,29 +1494,65 @@ def effective_prompt(session_id="", path=None):
     return settings.get("globalPrompt", "")
 
 
-def create_agent_file(params, project_root=None, claude_dir=None):
-    project_root = Path(project_root or os.getcwd())
-    claude_dir = Path(claude_dir or CLAUDE_DIR)
-    scope = params.get("scope", "project")
+def agent_markdown_text(params):
     name = safe_name(params.get("name", ""))
-    description = params.get("description", "").strip()
-    model = params.get("model", "").strip()
-    tools = params.get("tools", "").strip()
-    prompt = params.get("prompt", "").strip()
+    description = str(params.get("description", "")).strip()
+    model = str(params.get("model", "")).strip()
+    tools = str(params.get("tools", "")).strip()
+    prompt = str(params.get("prompt", "")).strip()
     if not description or not prompt:
         raise ValueError("description and prompt are required")
-
-    target_dir = project_root / ".claude" / "agents" if scope == "project" else claude_dir / "agents"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{name}.md"
-
     frontmatter = ["---", f"name: {name}", f"description: {description}"]
     if model:
         frontmatter.append(f"model: {model}")
     if tools:
         frontmatter.append(f"tools: {tools}")
     frontmatter.append("---")
-    text = "\n".join(frontmatter) + "\n\n" + prompt.rstrip() + "\n"
+    return name, "\n".join(frontmatter) + "\n\n" + prompt.rstrip() + "\n"
+
+
+def read_agent_file(path):
+    target = Path(path)
+    if not target.exists() or not target.is_file():
+        raise ValueError("Agent file not found")
+    text = target.read_text(encoding="utf-8", errors="replace")
+    meta = parse_frontmatter(text)
+    prompt = text
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            prompt = text[end + 4:].lstrip("\r\n")
+    return {
+        "name": meta.get("name") or target.stem,
+        "description": meta.get("description", ""),
+        "model": meta.get("model", ""),
+        "tools": meta.get("tools", ""),
+        "prompt": prompt.rstrip(),
+        "path": str(target),
+    }
+
+
+def update_agent_file(params):
+    target = Path(str(params.get("path", "")).strip())
+    if not target.exists() or not target.is_file():
+        raise ValueError("Agent file not found")
+    name, text = agent_markdown_text(params)
+    target.write_text(text, encoding="utf-8")
+    record = read_agent_file(target)
+    record["name"] = name
+    return record
+
+
+def create_agent_file(params, project_root=None, claude_dir=None):
+    project_root = Path(project_root or os.getcwd())
+    claude_dir = Path(claude_dir or CLAUDE_DIR)
+    scope = params.get("scope", "project")
+    name, text = agent_markdown_text(params)
+
+    target_dir = project_root / ".claude" / "agents" if scope == "project" else claude_dir / "agents"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{name}.md"
+
     target.write_text(text, encoding="utf-8")
     return {"name": name, "scope": scope, "path": str(target)}
 
@@ -1792,6 +1833,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             agent_name = params.get("agentName", [""])[0]
             project_root = params.get("projectRoot", [""])[0]
             self._json_response(load_agent_workspace(agent_name, project_root))
+        elif path == "/api/agent-file":
+            self._json_response(read_agent_file(params.get("path", [""])[0]))
         elif path == "/api/sessions":
             project_id = params.get("project", [None])[0]
             if not project_id:
@@ -1895,6 +1938,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 record = create_agent_file(payload, project_root=project_root, claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=project_root)
                 self._json_response(record, 201)
+            elif path == "/api/agents/update":
+                record = update_agent_file(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 200)
             elif path == "/api/qq-push/profile":
                 record = save_qq_push_profile(payload)
                 refresh_local_catalog(project_root=os.getcwd())
