@@ -41,6 +41,7 @@
     const generatedAgentCommand = document.getElementById('generated-agent-command');
     const refreshLocalBtn = document.getElementById('refresh-local-btn');
     const catalogProjectRoot = document.getElementById('catalog-project-root');
+    const catalogProjectRootSelect = document.getElementById('catalog-project-root-select');
     const useSelectedProjectRootBtn = document.getElementById('use-selected-project-root-btn');
     const catalogUpdated = document.getElementById('catalog-updated');
     const localSummary = document.getElementById('local-summary');
@@ -95,6 +96,16 @@
     const createAgentSchedulerBtn = document.getElementById('create-agent-scheduler-btn');
     const agentSchedulerCommand = document.getElementById('agent-scheduler-command');
     const saveAgentConnectionBtn = document.getElementById('save-agent-connection-btn');
+    const openMcpModalBtn = document.getElementById('open-mcp-modal-btn');
+    const openSkillModalBtn = document.getElementById('open-skill-modal-btn');
+    const contextMenu = document.getElementById('context-menu');
+    const actionModal = document.getElementById('action-modal');
+    const actionModalTitle = document.getElementById('action-modal-title');
+    const actionModalBody = document.getElementById('action-modal-body');
+    const actionModalSubmit = document.getElementById('action-modal-submit');
+    const actionModalCancel = document.getElementById('action-modal-cancel');
+    const actionModalClose = document.getElementById('action-modal-close');
+    let modalSubmitHandler = null;
 
     // --- API helpers ---
     async function api(url) {
@@ -125,6 +136,43 @@
         setTimeout(() => {
             toast.style.display = 'none';
         }, 2200);
+    }
+
+    function openModal(title, bodyHtml, onSubmit) {
+        if (!actionModal) return;
+        actionModalTitle.textContent = title;
+        actionModalBody.innerHTML = bodyHtml;
+        modalSubmitHandler = onSubmit;
+        actionModal.style.display = 'flex';
+    }
+
+    function closeModal() {
+        if (!actionModal) return;
+        actionModal.style.display = 'none';
+        actionModalBody.innerHTML = '';
+        modalSubmitHandler = null;
+    }
+
+    function showContextMenu(x, y, items) {
+        if (!contextMenu) return;
+        contextMenu.innerHTML = '';
+        items.forEach(item => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = item.label;
+            button.addEventListener('click', () => {
+                hideContextMenu();
+                item.action();
+            });
+            contextMenu.appendChild(button);
+        });
+        contextMenu.style.left = `${x}px`;
+        contextMenu.style.top = `${y}px`;
+        contextMenu.style.display = 'block';
+    }
+
+    function hideContextMenu() {
+        if (contextMenu) contextMenu.style.display = 'none';
     }
 
     // --- Format helpers ---
@@ -602,11 +650,13 @@
             <strong>${escapeHtml(item.name)}</strong>
             <span>${escapeHtml(item.scope)} · ${escapeHtml(item.transport || '')}</span>
             <code>${escapeHtml(item.command || item.url || item.path || '')}</code>
+            <span class="row-menu-target" data-menu-kind="mcp" data-menu-item="${escapeHtml(encodeData(item))}"></span>
         `);
         renderResourceList(skillList, catalog.skills, '未发现本地 Skill', item => `
             <strong>${escapeHtml(item.name)}</strong>
             <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
             <code>${escapeHtml(item.path || '')}</code>
+            <span class="row-menu-target" data-menu-kind="skill" data-menu-item="${escapeHtml(encodeData(item))}"></span>
         `);
         renderResourceList(agentList, catalog.agents, '未发现本地 Agent', item => `
             <strong>${escapeHtml(item.name)}</strong>
@@ -614,6 +664,7 @@
             <code>${escapeHtml(item.path || '')}</code>
             <button class="btn-mini" data-select-agent="${escapeHtml(item.name)}" data-agent-path="${escapeHtml(item.path || '')}" data-agent-scope="${escapeHtml(item.scope || '')}" data-agent-description="${escapeHtml(item.description || '')}">选择</button>
             <button class="btn-mini" data-edit-agent-path="${escapeHtml(item.path || '')}">编辑文件</button>
+            <span class="row-menu-target" data-menu-kind="agent" data-menu-item="${escapeHtml(encodeData(item))}"></span>
         `);
         renderResourceList(commandList, catalog.commands, '未发现本地 slash command', item => `
             <strong>/${escapeHtml(item.name)}</strong>
@@ -651,6 +702,222 @@
         }
     }
 
+    async function openLocalPath(path) {
+        if (!path) {
+            showToast('缺少本地路径');
+            return;
+        }
+        try {
+            await apiPost('/api/open-path', { path });
+        } catch (e) {
+            showToast(`打开路径失败：${e.message}`);
+        }
+    }
+
+    function openMcpEditor(item = {}) {
+        const definition = item.definition || {};
+        const defaultPath = item.path || `${currentCatalogRoot()}\\.mcp.json`;
+        openModal('添加或编辑 MCP', `
+            <div class="form-grid modal-form">
+                <label><span>名称</span><input id="modal-mcp-name" type="text" value="${escapeHtml(item.name || '')}" placeholder="browser"></label>
+                <label class="wide"><span>配置文件</span><input id="modal-mcp-path" type="text" value="${escapeHtml(defaultPath)}" placeholder=".mcp.json 路径"></label>
+                <label class="wide"><span>MCP JSON</span><textarea id="modal-mcp-json" rows="8" placeholder='{"command":"npx","args":["browser-mcp"]}'>${escapeHtml(JSON.stringify(definition, null, 2))}</textarea></label>
+            </div>
+        `, async () => {
+            const result = await apiPost('/api/mcp/save', {
+                name: readValue('modal-mcp-name'),
+                path: readValue('modal-mcp-path'),
+                json: readValue('modal-mcp-json'),
+                projectRoot: currentCatalogRoot(),
+            });
+            if (mcpCommand) mcpCommand.textContent = `saved ${result.name} -> ${result.path}`;
+            closeModal();
+            showToast('MCP 已保存');
+            loadLocalCatalog(true);
+        });
+    }
+
+    function openSkillInstaller() {
+        openModal('搜索并安装 Skill', `
+            <div class="form-grid modal-form">
+                <label class="wide"><span>关键词</span><input id="modal-skill-query" type="text" placeholder="例如 pdf, browser, notion"></label>
+                <label class="wide inline-action"><button class="btn-secondary" id="modal-skill-search-btn" type="button">搜索公开来源</button></label>
+                <label><span>Skill 名称</span><input id="modal-skill-name" type="text" placeholder="可留空自动推断"></label>
+                <label class="wide"><span>Git 仓库 URL</span><input id="modal-skill-repo" type="text" placeholder="https://github.com/org/repo.git"></label>
+                <div class="wide search-results" id="modal-skill-results"></div>
+            </div>
+        `, async () => {
+            const result = await apiPost('/api/skills/install', {
+                skillName: readValue('modal-skill-name'),
+                repoUrl: readValue('modal-skill-repo'),
+            });
+            if (skillCommand) skillCommand.textContent = result.command || result.path || '';
+            closeModal();
+            showToast(result.installed ? 'Skill 已安装' : 'Skill 安装失败');
+            loadLocalCatalog(true);
+        });
+
+        const searchButton = document.getElementById('modal-skill-search-btn');
+        const resultsBox = document.getElementById('modal-skill-results');
+        if (!searchButton || !resultsBox) return;
+        searchButton.addEventListener('click', async () => {
+            resultsBox.innerHTML = '<div class="resource-empty">搜索中...</div>';
+            try {
+                const data = await apiPost('/api/skills/search', {
+                    query: readValue('modal-skill-query'),
+                    source: 'all',
+                });
+                if (!data.results || data.results.length === 0) {
+                    resultsBox.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
+                    return;
+                }
+                resultsBox.innerHTML = '';
+                data.results.forEach(result => {
+                    const row = document.createElement('div');
+                    row.className = 'search-result-row';
+                    const repoUrl = result.repoUrl || result.sourceUrl || '';
+                    const action = result.installable
+                        ? `<button class="btn-mini" type="button" data-modal-skill-name="${escapeHtml(result.name)}" data-modal-skill-repo="${escapeHtml(repoUrl)}">使用</button>`
+                        : `<a class="btn-mini" href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener">打开</a>`;
+                    row.innerHTML = `
+                        <div>
+                            <strong>${escapeHtml(result.name)}</strong>
+                            <span>${escapeHtml(result.source || 'source')} · ${escapeHtml(result.description || 'no description')}</span>
+                            <code>${escapeHtml(repoUrl)}</code>
+                        </div>
+                        ${action}
+                    `;
+                    resultsBox.appendChild(row);
+                });
+            } catch (e) {
+                resultsBox.innerHTML = `<div class="resource-empty">搜索失败：${escapeHtml(e.message)}</div>`;
+            }
+        });
+    }
+
+    async function saveSessionMeta(session, patch) {
+        await apiPost('/api/sessions/meta', {
+            projectId: session.projectId || currentProject,
+            sessionId: session.id,
+            titleAlias: session.titleAlias || '',
+            hidden: false,
+            ...patch,
+        });
+        await loadSessions();
+    }
+
+    function openSessionEditor(item) {
+        const currentPrompt = promptSettings.sessionPrompts?.[item.id] || '';
+        openModal('编辑会话', `
+            <div class="form-grid modal-form">
+                <label class="wide"><span>会话名称</span><input id="modal-session-title" type="text" value="${escapeHtml(item.titleAlias || item.title || '')}"></label>
+                <label class="wide"><span>会话提示词</span><textarea id="modal-session-prompt" rows="8" placeholder="留空则使用全局提示词">${escapeHtml(currentPrompt)}</textarea></label>
+                <label class="wide"><span>原始会话 ID</span><input type="text" value="${escapeHtml(item.id || '')}" disabled></label>
+            </div>
+        `, async () => {
+            await saveSessionMeta(item, { titleAlias: readValue('modal-session-title') });
+            promptSettings = await apiPost('/api/prompts', {
+                scope: 'session',
+                sessionId: item.id,
+                prompt: readValue('modal-session-prompt'),
+            });
+            renderPromptSettings(item.id);
+            closeModal();
+            showToast('会话设置已保存');
+        });
+    }
+
+    function contextItemsFor(kind, item) {
+        if (kind === 'session') {
+            return [
+                { label: '编辑会话', action: () => openSessionEditor(item) },
+                { label: '复制恢复命令', action: () => copyText(item.resumeCommand || '') },
+                {
+                    label: '删除会话到本地备份',
+                    action: async () => {
+                        if (!confirm('会话文件会移到 data/deleted_sessions，本操作不会永久删除。是否继续？')) return;
+                        try {
+                            await apiPost('/api/sessions/delete', {
+                                projectId: item.projectId || currentProject,
+                                sessionId: item.id,
+                                titleAlias: item.titleAlias || item.title || '',
+                            });
+                            await loadSessions();
+                            showToast('会话已移入本地备份');
+                        } catch (e) {
+                            showToast(`删除会话失败：${e.message}`);
+                        }
+                    },
+                },
+            ];
+        }
+        if (kind === 'mcp') {
+            return [
+                { label: '编辑 MCP', action: () => openMcpEditor(item) },
+                { label: '打开配置位置', action: () => openLocalPath(item.path || '') },
+                {
+                    label: '删除 MCP',
+                    action: async () => {
+                        if (!confirm(`删除 MCP：${item.name}？`)) return;
+                        try {
+                            await apiPost('/api/mcp/delete', {
+                                name: item.name,
+                                path: item.path,
+                                projectRoot: currentCatalogRoot(),
+                            });
+                            showToast('MCP 已删除');
+                            loadLocalCatalog(true);
+                        } catch (e) {
+                            showToast(`删除 MCP 失败：${e.message}`);
+                        }
+                    },
+                },
+            ];
+        }
+        if (kind === 'skill') {
+            return [
+                { label: '编辑 Skill 文件', action: () => openLocalPath(item.path || '') },
+                { label: '复制 Skill 路径', action: () => copyText(item.path || '') },
+                {
+                    label: '删除 Skill',
+                    action: async () => {
+                        if (!confirm(`删除 Skill 目录：${item.name}？`)) return;
+                        try {
+                            await apiPost('/api/skills/delete', {
+                                path: item.path,
+                                projectRoot: currentCatalogRoot(),
+                            });
+                            showToast('Skill 已删除');
+                            loadLocalCatalog(true);
+                        } catch (e) {
+                            showToast(`删除 Skill 失败：${e.message}`);
+                        }
+                    },
+                },
+            ];
+        }
+        if (kind === 'agent') {
+            return [
+                { label: '选择 Agent', action: () => selectAgent(item) },
+                {
+                    label: '编辑 Agent',
+                    action: async () => {
+                        try {
+                            const agent = await api(`/api/agent-file?path=${encodeURIComponent(item.path || '')}`);
+                            fillAgentEditor(agent);
+                            document.querySelectorAll('.secondary-tools').forEach(section => section.classList.remove('is-collapsed'));
+                            document.getElementById('agent-creator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        } catch (e) {
+                            showToast(`读取 Agent 失败：${e.message}`);
+                        }
+                    },
+                },
+                { label: '打开 Agent 文件', action: () => openLocalPath(item.path || '') },
+            ];
+        }
+        return [];
+    }
+
     async function copyText(text) {
         const normalized = String(text || '').replace(/`n/g, '\n');
         if (!normalized.trim()) return;
@@ -682,9 +949,11 @@
         try {
             const projects = await api('/api/projects');
             projectSelect.innerHTML = '';
+            if (catalogProjectRootSelect) catalogProjectRootSelect.innerHTML = '';
 
             if (projects.length === 0) {
                 projectSelect.innerHTML = '<option value="">未找到项目</option>';
+                if (catalogProjectRootSelect) catalogProjectRootSelect.innerHTML = '<option value="">未找到项目</option>';
                 return;
             }
 
@@ -694,6 +963,12 @@
                 opt.dataset.path = p.path || p.name || '';
                 opt.textContent = `${p.name} (${p.sessionCount})`;
                 projectSelect.appendChild(opt);
+                if (catalogProjectRootSelect) {
+                    const rootOpt = document.createElement('option');
+                    rootOpt.value = p.path || p.name || '';
+                    rootOpt.textContent = `${p.name} (${p.sessionCount})`;
+                    catalogProjectRootSelect.appendChild(rootOpt);
+                }
             });
 
             // Auto-select first project
@@ -703,6 +978,7 @@
             if (catalogProjectRoot && !catalogProjectRoot.value.trim()) {
                 catalogProjectRoot.value = currentProjectPath;
             }
+            if (catalogProjectRootSelect) catalogProjectRootSelect.value = currentProjectPath;
             loadLocalCatalog(true);
             loadSessions();
         } catch (e) {
@@ -743,6 +1019,8 @@
             const card = document.createElement('div');
             card.className = 'session-card' + (s.id === currentSessionId ? ' active' : '');
             card.dataset.id = s.id;
+            card.dataset.menuKind = 'session';
+            card.dataset.menuItem = encodeData(s);
 
             card.innerHTML = `
                 <div class="session-card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
@@ -1459,6 +1737,58 @@
         backHomeBtn.addEventListener('click', showHome);
     }
 
+    if (actionModalSubmit) {
+        actionModalSubmit.addEventListener('click', async () => {
+            if (!modalSubmitHandler) return;
+            try {
+                await modalSubmitHandler();
+            } catch (e) {
+                showToast(`操作失败：${e.message}`);
+            }
+        });
+    }
+
+    [actionModalCancel, actionModalClose].forEach(button => {
+        if (button) button.addEventListener('click', closeModal);
+    });
+
+    if (actionModal) {
+        actionModal.addEventListener('click', (e) => {
+            if (e.target === actionModal) closeModal();
+        });
+    }
+
+    if (openMcpModalBtn) {
+        openMcpModalBtn.addEventListener('click', () => openMcpEditor());
+    }
+
+    if (openSkillModalBtn) {
+        openSkillModalBtn.addEventListener('click', openSkillInstaller);
+    }
+
+    document.addEventListener('contextmenu', (e) => {
+        const sessionCard = e.target.closest('.session-card');
+        const rowTarget = e.target.closest('.resource-row')?.querySelector('.row-menu-target');
+        const target = sessionCard || rowTarget;
+        if (!target) return;
+        const kind = target.dataset.menuKind;
+        const item = decodeData(target.dataset.menuItem);
+        const items = contextItemsFor(kind, item);
+        if (items.length === 0) return;
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY, items);
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.context-menu')) hideContextMenu();
+        const modalSkill = e.target.closest('[data-modal-skill-repo]');
+        if (modalSkill) {
+            setValue('modal-skill-name', modalSkill.dataset.modalSkillName || '');
+            setValue('modal-skill-repo', modalSkill.dataset.modalSkillRepo || '');
+            showToast('已填入 Skill 安装信息');
+        }
+    });
+
     // --- Event listeners ---
     projectSelect.addEventListener('change', () => {
         currentProject = projectSelect.value;
@@ -1466,6 +1796,9 @@
         clearSelectedAgent();
         if (catalogProjectRoot) {
             catalogProjectRoot.value = currentProjectPath;
+        }
+        if (catalogProjectRootSelect) {
+            catalogProjectRootSelect.value = currentProjectPath;
         }
         currentSessionId = '';
         conversationView.style.display = 'none';
@@ -1485,6 +1818,15 @@
 
     if (catalogProjectRoot) {
         catalogProjectRoot.addEventListener('change', () => {
+            clearSelectedAgent();
+            if (catalogProjectRootSelect) catalogProjectRootSelect.value = catalogProjectRoot.value;
+            loadLocalCatalog(true);
+        });
+    }
+
+    if (catalogProjectRootSelect) {
+        catalogProjectRootSelect.addEventListener('change', () => {
+            if (catalogProjectRoot) catalogProjectRoot.value = catalogProjectRootSelect.value;
             clearSelectedAgent();
             loadLocalCatalog(true);
         });

@@ -135,6 +135,27 @@ class LocalCatalogTests(unittest.TestCase):
         command = server.build_mcp_import_command("browser", '{"command":"npx","args":["browser-mcp"]}')
         self.assertEqual(command, 'claude mcp add-json browser "{\\"command\\":\\"npx\\",\\"args\\":[\\"browser-mcp\\"]}"')
 
+    def test_mcp_save_and_delete_updates_config_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".mcp.json"
+            saved = server.save_mcp_server(
+                {
+                    "name": "browser",
+                    "path": str(path),
+                    "json": '{"command":"npx","args":["browser-mcp"]}',
+                }
+            )
+
+            self.assertEqual(saved["name"], "browser")
+            config = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(config["mcpServers"]["browser"]["command"], "npx")
+
+            deleted = server.delete_mcp_server({"name": "browser", "path": str(path)})
+
+            self.assertTrue(deleted["deleted"])
+            config = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("browser", config["mcpServers"])
+
     def test_skill_search_maps_repository_results(self):
         def fake_fetcher(url):
             self.assertIn("api.github.com/search/repositories", url)
@@ -366,7 +387,19 @@ class LocalCatalogTests(unittest.TestCase):
         html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
 
         self.assertIn('id="catalog-project-root"', html)
-        self.assertIn('id="use-selected-project-root-btn"', html)
+        self.assertIn('id="catalog-project-root-select"', html)
+        self.assertNotIn('id="use-selected-project-root-btn"', html)
+
+    def test_home_page_has_resource_action_modal_and_context_menu(self):
+        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="open-mcp-modal-btn"', html)
+        self.assertIn('id="open-skill-modal-btn"', html)
+        self.assertIn('id="context-menu"', html)
+        self.assertIn('id="action-modal"', html)
+        self.assertNotIn('id="refresh-local-btn"', html)
+        self.assertNotIn('id="toggle-local-tools-btn"', html)
+        self.assertNotIn('id="focus-search-btn"', html)
 
     def test_home_page_has_agent_gated_automation_controls(self):
         root = Path(__file__).resolve().parents[1]
@@ -654,10 +687,12 @@ class LocalCatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             original_projects_dir = server.PROJECTS_DIR
             original_cache_dir = server.CACHE_DIR
+            original_session_meta_path = server.SESSION_META_PATH
             try:
                 root = Path(tmp)
                 server.PROJECTS_DIR = root / "projects"
                 server.CACHE_DIR = root / "cache"
+                server.SESSION_META_PATH = root / "session_meta.json"
                 project_id = "D--code-myweb-English"
                 project_dir = server.PROJECTS_DIR / project_id
                 project_dir.mkdir(parents=True)
@@ -681,6 +716,74 @@ class LocalCatalogTests(unittest.TestCase):
             finally:
                 server.PROJECTS_DIR = original_projects_dir
                 server.CACHE_DIR = original_cache_dir
+                server.SESSION_META_PATH = original_session_meta_path
+
+    def test_session_alias_and_hidden_meta_affects_session_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_projects_dir = server.PROJECTS_DIR
+            original_cache_dir = server.CACHE_DIR
+            original_session_meta_path = server.SESSION_META_PATH
+            try:
+                root = Path(tmp)
+                server.PROJECTS_DIR = root / "projects"
+                server.CACHE_DIR = root / "cache"
+                server.SESSION_META_PATH = root / "session_meta.json"
+                project_id = "D--code-myweb-English"
+                project_dir = server.PROJECTS_DIR / project_id
+                project_dir.mkdir(parents=True)
+                for session_id in ("abc123", "def456"):
+                    (project_dir / f"{session_id}.jsonl").write_text(
+                        json.dumps({"type": "user", "uuid": session_id, "message": {"content": session_id}}) + "\n",
+                        encoding="utf-8",
+                    )
+                server.save_session_meta_record(
+                    {"projectId": project_id, "sessionId": "abc123", "titleAlias": "Renamed session"},
+                )
+                server.save_session_meta_record(
+                    {"projectId": project_id, "sessionId": "def456", "hidden": True},
+                )
+
+                sessions = server.get_sessions_list(project_id)
+
+                self.assertEqual([item["id"] for item in sessions], ["abc123"])
+                self.assertEqual(sessions[0]["title"], "Renamed session")
+            finally:
+                server.PROJECTS_DIR = original_projects_dir
+                server.CACHE_DIR = original_cache_dir
+                server.SESSION_META_PATH = original_session_meta_path
+
+    def test_delete_session_record_moves_jsonl_to_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_projects_dir = server.PROJECTS_DIR
+            original_cache_dir = server.CACHE_DIR
+            original_data_dir = server.DATA_DIR
+            original_session_meta_path = server.SESSION_META_PATH
+            try:
+                root = Path(tmp)
+                server.PROJECTS_DIR = root / "projects"
+                server.CACHE_DIR = root / "cache"
+                server.DATA_DIR = root / "data"
+                server.SESSION_META_PATH = server.DATA_DIR / "session_meta.json"
+                project_id = "D--code-myweb-English"
+                project_dir = server.PROJECTS_DIR / project_id
+                project_dir.mkdir(parents=True)
+                session_file = project_dir / "abc123.jsonl"
+                session_file.write_text("{}\n", encoding="utf-8")
+                server.CACHE_DIR.mkdir(parents=True)
+                (server.CACHE_DIR / "abc123.json").write_text("{}", encoding="utf-8")
+
+                result = server.delete_session_record({"projectId": project_id, "sessionId": "abc123"})
+
+                self.assertTrue(result["deleted"])
+                self.assertFalse(session_file.exists())
+                self.assertFalse((server.CACHE_DIR / "abc123.json").exists())
+                self.assertTrue(Path(result["backupPath"]).exists())
+                self.assertTrue(server.session_meta_for(project_id, "abc123")["hidden"])
+            finally:
+                server.PROJECTS_DIR = original_projects_dir
+                server.CACHE_DIR = original_cache_dir
+                server.DATA_DIR = original_data_dir
+                server.SESSION_META_PATH = original_session_meta_path
 
     def test_home_project_resume_command_omits_cd(self):
         self.assertEqual(server.build_resume_command("C:\\Users\\Light", "abc123", home_path=Path("C:/Users/Light")), "claude -r abc123")

@@ -77,9 +77,6 @@
                             <p class="welcome-desc">读取本机 Claude 配置，管理 MCP、Skill、Agent 和定时任务参数；所有命令都由你的输入生成并保存到本地。</p>
                             <div class="hero-actions">
                                 <button class="btn-primary" data-copy="#generated-agent-command">复制当前命令</button>
-                                <button class="btn-secondary" id="refresh-local-btn">刷新本地索引</button>
-                                <button class="btn-secondary" id="toggle-local-tools-btn">显示本地工具</button>
-                                <button class="btn-secondary" id="focus-search-btn">选择会话</button>
                             </div>
                         </div>
                         <div class="code-window-card" id="agent-command-builder">
@@ -118,10 +115,13 @@
                         </div>
                         <div class="catalog-root-control">
                             <label>
-                                <span>本地索引项目路径</span>
+                                <span>本地索引项目</span>
+                                <select id="catalog-project-root-select"></select>
+                            </label>
+                            <label>
+                                <span>项目路径</span>
                                 <input id="catalog-project-root" type="text" placeholder="例如 D:\code\myweb\English">
                             </label>
-                            <button class="btn-secondary" id="use-selected-project-root-btn">使用当前会话项目</button>
                         </div>
                         <div class="summary-grid" id="local-summary">
                             <div><strong>0</strong><span>MCP</span></div>
@@ -220,6 +220,10 @@
                         <div class="section-heading">
                             <h2>MCP 与 Skill</h2>
                             <p>MCP 支持粘贴 JSON 生成 <code>add-json</code> 命令；Skill 先支持 Git 仓库安装命令和本地索引。</p>
+                            <div class="button-row">
+                                <button class="btn-secondary" id="open-mcp-modal-btn">添加 MCP</button>
+                                <button class="btn-secondary" id="open-skill-modal-btn">添加 Skill</button>
+                            </div>
                         </div>
                         <div class="control-grid">
                             <article class="control-panel dark-control">
@@ -422,6 +426,22 @@
     <!-- Toast notification -->
     <div class="toast" id="toast" style="display:none;">
         <span id="toast-msg"></span>
+    </div>
+
+    <div class="context-menu" id="context-menu" style="display:none;"></div>
+
+    <div class="modal-backdrop" id="action-modal" style="display:none;">
+        <div class="action-modal-card">
+            <div class="modal-header">
+                <h3 id="action-modal-title">操作</h3>
+                <button class="btn-icon" id="action-modal-close" title="关闭">×</button>
+            </div>
+            <div id="action-modal-body"></div>
+            <div class="button-row modal-actions">
+                <button class="btn-secondary" id="action-modal-cancel">取消</button>
+                <button class="btn-primary" id="action-modal-submit">保存</button>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>

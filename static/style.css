@@ -1555,6 +1555,76 @@ select option {
     to { opacity: 0; }
 }
 
+/* --- Context menu and modal --- */
+.context-menu {
+    position: fixed;
+    z-index: 1200;
+    min-width: 168px;
+    padding: 6px;
+    background: var(--colors-surface-cream);
+    border: 1px solid var(--colors-surface-cream-strong);
+    border-radius: var(--r-sm);
+    box-shadow: var(--shadow-card);
+}
+
+.context-menu button {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-radius: var(--r-xs);
+    padding: 9px 10px;
+    background: transparent;
+    color: var(--colors-text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.context-menu button:hover {
+    background: var(--colors-surface-warm);
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    align-items: center;
+    justify-content: center;
+    padding: var(--sp-lg);
+    background: rgba(42, 38, 34, 0.36);
+}
+
+.action-modal-card {
+    width: min(720px, 100%);
+    max-height: min(820px, 92vh);
+    overflow: auto;
+    padding: var(--sp-xl);
+    background: var(--colors-surface);
+    border: 1px solid var(--colors-surface-cream-strong);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-card);
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-md);
+    margin-bottom: var(--sp-md);
+}
+
+.modal-header h3 {
+    margin: 0;
+}
+
+.modal-form {
+    margin-bottom: var(--sp-md);
+}
+
+.modal-actions {
+    justify-content: flex-end;
+}
+
 /* --- Scrollbar --- */
 .session-list::-webkit-scrollbar,
 .messages-container::-webkit-scrollbar {

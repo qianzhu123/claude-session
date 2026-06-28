@@ -37,6 +37,7 @@ QQ_PUSH_RUNS_PATH = DATA_DIR / "qq_push_runs.json"
 AGENT_TASKS_PATH = DATA_DIR / "agent_tasks.json"
 AGENT_CONNECTIONS_PATH = DATA_DIR / "agent_connections.json"
 AGENT_RUNS_PATH = DATA_DIR / "agent_runs.json"
+SESSION_META_PATH = DATA_DIR / "session_meta.json"
 
 
 def ensure_cache_dir():
@@ -73,6 +74,64 @@ def append_json_record(path, record):
 
 def now_timestamp():
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def load_session_meta(path=None):
+    meta = read_json_file(Path(path or SESSION_META_PATH), {"sessions": {}})
+    if not isinstance(meta, dict):
+        meta = {}
+    if not isinstance(meta.get("sessions"), dict):
+        meta["sessions"] = {}
+    return meta
+
+
+def save_session_meta_record(params, path=None):
+    session_id = str(params.get("sessionId", "")).strip()
+    project_id = str(params.get("projectId", "")).strip()
+    if not session_id or not project_id:
+        raise ValueError("sessionId and projectId are required")
+    key = f"{project_id}/{session_id}"
+    meta_path = Path(path or SESSION_META_PATH)
+    meta = load_session_meta(meta_path)
+    record = dict(meta["sessions"].get(key, {}))
+    record.update({
+        "sessionId": session_id,
+        "projectId": project_id,
+        "titleAlias": str(params.get("titleAlias", record.get("titleAlias", ""))).strip(),
+        "hidden": bool(params.get("hidden", record.get("hidden", False))),
+        "updatedAt": now_timestamp(),
+    })
+    meta["sessions"][key] = record
+    write_json_file(meta_path, meta)
+    return record
+
+
+def session_meta_for(project_id, session_id, path=None):
+    return load_session_meta(path)["sessions"].get(f"{project_id}/{session_id}", {})
+
+
+def delete_session_record(params):
+    project_id = str(params.get("projectId", "")).strip()
+    session_id = str(params.get("sessionId", "")).strip()
+    if not project_id or not session_id:
+        raise ValueError("projectId and sessionId are required")
+    session_file = PROJECTS_DIR / project_id / f"{session_id}.jsonl"
+    if not session_file.exists():
+        raise ValueError("Session file not found")
+    backup_dir = DATA_DIR / "deleted_sessions" / safe_name(project_id)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup_file = backup_dir / f"{session_id}.{int(time.time())}.jsonl"
+    shutil.move(str(session_file), str(backup_file))
+    cache_file = CACHE_DIR / f"{session_id}.json"
+    if cache_file.exists():
+        cache_file.unlink()
+    save_session_meta_record({
+        "projectId": project_id,
+        "sessionId": session_id,
+        "hidden": True,
+        "titleAlias": str(params.get("titleAlias", "")),
+    })
+    return {"sessionId": session_id, "projectId": project_id, "deleted": True, "backupPath": str(backup_file)}
 
 
 def parse_frontmatter(text):
@@ -268,8 +327,78 @@ def scan_mcp_file(path, scope):
             "command": definition.get("command", ""),
             "url": definition.get("url", ""),
             "args": definition.get("args", []),
+            "definition": definition,
         })
     return result
+
+
+def save_mcp_server(params):
+    name = safe_name(params.get("name", ""))
+    config_path = Path(str(params.get("path", "")).strip() or Path(params.get("projectRoot", os.getcwd())) / ".mcp.json")
+    json_text = str(params.get("json", "")).strip()
+    if not json_text:
+        raise ValueError("json is required")
+    try:
+        definition = json.loads(json_text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid MCP JSON: {e}") from e
+    if not isinstance(definition, dict):
+        raise ValueError("MCP definition must be a JSON object")
+    config = read_json_file(config_path, {})
+    if not isinstance(config, dict):
+        config = {}
+    if not isinstance(config.get("mcpServers"), dict):
+        config["mcpServers"] = {}
+    config["mcpServers"][name] = definition
+    write_json_file(config_path, config)
+    return {"name": name, "path": str(config_path), "definition": definition}
+
+
+def delete_mcp_server(params):
+    name = str(params.get("name", "")).strip()
+    config_path = Path(str(params.get("path", "")).strip())
+    if not name or not config_path:
+        raise ValueError("name and path are required")
+    config = read_json_file(config_path, {})
+    servers = config.get("mcpServers", {}) if isinstance(config, dict) else {}
+    if not isinstance(servers, dict) or name not in servers:
+        raise ValueError("MCP server not found")
+    servers.pop(name, None)
+    config["mcpServers"] = servers
+    write_json_file(config_path, config)
+    return {"name": name, "path": str(config_path), "deleted": True}
+
+
+def delete_skill_path(params):
+    target = Path(str(params.get("path", "")).strip())
+    if not target.exists() or not target.is_dir():
+        raise ValueError("Skill directory not found")
+    allowed_roots = [
+        Path(params.get("projectRoot", os.getcwd())) / ".claude" / "skills",
+        CLAUDE_DIR / "skills",
+    ]
+    resolved = target.resolve()
+    if not any(str(resolved).lower().startswith(str(root.resolve()).lower()) for root in allowed_roots if root.exists() or root.parent.exists()):
+        raise ValueError("Refusing to delete a skill outside project/user skills directories")
+    if not (target / "SKILL.md").exists():
+        raise ValueError("Refusing to delete a directory without SKILL.md")
+    shutil.rmtree(target)
+    return {"path": str(target), "deleted": True}
+
+
+def open_local_path(params):
+    target = Path(str(params.get("path", "")).strip())
+    if not target.exists():
+        raise ValueError("Path not found")
+    if os.name == "nt":
+        if target.is_file():
+            subprocess.Popen(["explorer.exe", "/select,", str(target)])
+        else:
+            subprocess.Popen(["explorer.exe", str(target)])
+    else:
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([opener, str(target if target.is_dir() else target.parent)])
+    return {"path": str(target), "opened": True}
 
 
 def decode_project_id(project_id):
@@ -1736,6 +1865,9 @@ def get_sessions_list(project_id):
     sessions = []
     for jsonl_file in sorted(project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True):
         session_id = jsonl_file.stem
+        local_meta = session_meta_for(project_id, session_id)
+        if local_meta.get("hidden"):
+            continue
         fingerprint = get_file_fingerprint(str(jsonl_file))
         cache_path = CACHE_DIR / f"{session_id}.json"
 
@@ -1782,7 +1914,9 @@ def get_sessions_list(project_id):
 
         sessions.append({
             "id": session_id,
-            "title": ai_title,
+            "title": local_meta.get("titleAlias") or ai_title,
+            "originalTitle": ai_title,
+            "titleAlias": local_meta.get("titleAlias", ""),
             "messageCount": message_count,
             "lastTimestamp": last_timestamp,
             "fileSize": jsonl_file.stat().st_size,
@@ -1899,6 +2033,14 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 append_json_record(MCP_IMPORTS_PATH, record)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(record, 201)
+            elif path == "/api/mcp/save":
+                record = save_mcp_server(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/mcp/delete":
+                record = delete_mcp_server(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 200)
             elif path == "/api/skills/install-command":
                 command = build_skill_install_command(payload)
                 record = dict(payload)
@@ -1923,12 +2065,24 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 result = organize_skill_bundle(payload.get("bundlePath", ""), claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(result, 201)
+            elif path == "/api/skills/delete":
+                result = delete_skill_path(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(result, 200)
             elif path == "/api/skills/search":
-                self._json_response({"results": search_skill_repositories(payload.get("query", ""), source=payload.get("source", "github"))})
+                self._json_response({"results": search_skill_repositories(payload.get("query", ""), source=payload.get("source", "all"))})
             elif path == "/api/prompts":
                 settings = save_prompt_setting(payload)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(settings, 201)
+            elif path == "/api/sessions/meta":
+                record = save_session_meta_record(payload)
+                self._json_response(record, 200)
+            elif path == "/api/sessions/delete":
+                record = delete_session_record(payload)
+                self._json_response(record, 200)
+            elif path == "/api/open-path":
+                self._json_response(open_local_path(payload), 200)
             elif path == "/api/agents":
                 project_root = resolve_catalog_project_root(
                     project_root=payload.get("projectRoot", ""),
