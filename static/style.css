@@ -293,6 +293,17 @@ body {
     white-space: nowrap;
 }
 
+.session-project {
+    margin-bottom: var(--sp-xxs);
+    color: var(--colors-muted-soft);
+    font-family: var(--font-code);
+    font-size: 10px;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .session-card-meta {
     display: flex;
     align-items: center;
@@ -525,6 +536,28 @@ body {
 .workspace-section {
     padding: 72px var(--sp-xxl);
     border-bottom: 1px solid var(--colors-surface-cream-strong);
+    background: linear-gradient(180deg, var(--colors-canvas) 0%, var(--colors-surface-soft) 100%);
+    scroll-margin-top: 72px;
+}
+
+.workspace-section + .workspace-section {
+    position: relative;
+}
+
+.workspace-section + .workspace-section::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 0;
+    right: 0;
+    height: 56px;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(247, 244, 238, 0.85), rgba(247, 244, 238, 0));
+}
+
+.agent-gated.is-locked,
+.secondary-tools.is-collapsed {
+    display: none;
 }
 
 .section-heading {
@@ -992,6 +1025,20 @@ body {
     padding: 10px 12px;
 }
 
+select,
+select option {
+    background: var(--colors-canvas);
+    color: var(--colors-ink);
+}
+
+.dark-control select,
+.dark-control select option,
+.product-mockup-card-dark select,
+.product-mockup-card-dark select option {
+    background: #fffdf8;
+    color: #1e1d1b;
+}
+
 .dark-control .form-grid input,
 .dark-control .form-grid select,
 .dark-control .form-grid textarea,
@@ -1001,6 +1048,12 @@ body {
     border-color: var(--colors-surface-dark-elevated);
     background: var(--colors-surface-dark-soft);
     color: var(--colors-on-dark);
+}
+
+.dark-control .form-grid select,
+.product-mockup-card-dark .form-grid select {
+    background: #fffdf8;
+    color: #1e1d1b;
 }
 
 .form-grid textarea {

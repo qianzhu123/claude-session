@@ -330,6 +330,18 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertIn('id="catalog-project-root"', html)
         self.assertIn('id="use-selected-project-root-btn"', html)
 
+    def test_home_page_has_agent_gated_automation_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "static" / "index.html").read_text(encoding="utf-8")
+        css = (root / "static" / "style.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="selected-agent-panel"', html)
+        self.assertIn('id="agent-task-cron"', html)
+        self.assertIn('id="agent-connection-type"', html)
+        self.assertIn('class="workspace-section agent-gated is-locked"', html)
+        self.assertIn(".agent-gated.is-locked", css)
+        self.assertIn("select option", css)
+
     def test_qq_push_profile_saves_secrets_locally_and_returns_sanitized_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "qq_push_config.json"
@@ -386,6 +398,158 @@ class LocalCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(payload, {"group_id": "123456", "message": "Daily summary"})
+
+    def test_agent_task_requires_agent_and_accepts_cron(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent_tasks.json"
+
+            record = server.save_agent_task(
+                {
+                    "agentName": "english-learning-agent",
+                    "agentPath": "D:\\code\\myweb\\English\\.claude\\agents\\english-learning-agent.md",
+                    "projectRoot": "D:\\code\\myweb\\English",
+                    "name": "Morning English",
+                    "cron": "30 7 * * *",
+                    "sessionPolicy": "new",
+                    "prompt": "Prepare today's English plan.",
+                    "connectionIds": ["qq-main"],
+                },
+                path=path,
+            )
+
+            self.assertEqual(record["agentName"], "english-learning-agent")
+            self.assertEqual(record["cron"], "30 7 * * *")
+            self.assertTrue(record["enabled"])
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))[0]["id"], record["id"])
+
+    def test_agent_task_resume_and_new_commands_are_project_aware(self):
+        new_command = server.build_agent_task_run_command(
+            {
+                "agentName": "english-learning-agent",
+                "projectRoot": "D:\\code\\myweb\\English",
+                "sessionPolicy": "new",
+                "prompt": "Run daily plan",
+            }
+        )
+        resume_command = server.build_agent_task_run_command(
+            {
+                "agentName": "english-learning-agent",
+                "projectRoot": "D:\\code\\myweb\\English",
+                "sessionPolicy": "resume",
+                "resumeSessionId": "abc123",
+                "prompt": "Continue daily plan",
+            }
+        )
+
+        self.assertIn('cd /d "D:\\code\\myweb\\English"', new_command)
+        self.assertIn('claude --agent english-learning-agent "Run daily plan"', new_command)
+        self.assertIn('claude -r abc123 --agent english-learning-agent "Continue daily plan"', resume_command)
+
+    def test_agent_workspace_filters_tasks_connections_and_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_path = root / "agent_tasks.json"
+            connection_path = root / "agent_connections.json"
+            run_path = root / "agent_runs.json"
+            server.write_json_file(task_path, [
+                {"id": "task-1", "agentName": "english-learning-agent", "projectRoot": "D:\\code\\myweb\\English"},
+                {"id": "task-2", "agentName": "other-agent", "projectRoot": "D:\\code\\myweb\\English"},
+            ])
+            server.write_json_file(connection_path, [
+                {"id": "conn-1", "agentName": "english-learning-agent", "projectRoot": "D:\\code\\myweb\\English"},
+                {"id": "conn-2", "agentName": "other-agent", "projectRoot": "D:\\code\\myweb\\English"},
+            ])
+            server.write_json_file(run_path, [
+                {"id": "run-1", "agentName": "english-learning-agent", "projectRoot": "D:\\code\\myweb\\English"},
+                {"id": "run-2", "agentName": "other-agent", "projectRoot": "D:\\code\\myweb\\English"},
+            ])
+
+            workspace = server.load_agent_workspace(
+                "english-learning-agent",
+                "D:\\code\\myweb\\English",
+                task_path=task_path,
+                connection_path=connection_path,
+                run_path=run_path,
+            )
+
+            self.assertEqual([item["id"] for item in workspace["tasks"]], ["task-1"])
+            self.assertEqual([item["id"] for item in workspace["connections"]], ["conn-1"])
+            self.assertEqual([item["id"] for item in workspace["runs"]], ["run-1"])
+
+    def test_agent_connection_saves_sanitized_secret_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent_connections.json"
+
+            record = server.save_agent_connection(
+                {
+                    "agentName": "english-learning-agent",
+                    "projectRoot": "D:\\code\\myweb\\English",
+                    "name": "qq-main",
+                    "type": "qq-onebot",
+                    "endpoint": "http://127.0.0.1:3000/send_group_msg",
+                    "token": "secret-token",
+                    "target": "group:123456",
+                },
+                path=path,
+            )
+
+            self.assertEqual(record["name"], "qq-main")
+            self.assertTrue(record["tokenSet"])
+            self.assertNotIn("secret-token", json.dumps(record))
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved[0]["token"], "secret-token")
+
+    def test_cron_matches_due_minute(self):
+        self.assertTrue(server.cron_matches("30 7 * * *", (2026, 6, 28, 7, 30)))
+        self.assertFalse(server.cron_matches("30 7 * * *", (2026, 6, 28, 7, 31)))
+        self.assertTrue(server.cron_matches("*/5 * * * *", (2026, 6, 28, 7, 30)))
+        self.assertTrue(server.cron_matches("30 7 * * 0", (2026, 6, 28, 7, 30)))
+
+    def test_scheduler_task_command_runs_agent_scheduler_every_minute(self):
+        command = server.build_agent_scheduler_task_command(
+            {
+                "taskName": "Claude Agent Scheduler",
+                "force": True,
+            },
+            script_path=Path("D:/code/myweb/claude-session-viewer/agent_scheduler.py"),
+            python_exe="C:/Python/python.exe",
+        )
+
+        self.assertIn('schtasks /Create /SC MINUTE /MO 1 /TN "Claude Agent Scheduler"', command)
+        self.assertIn("agent_scheduler.py", command)
+        self.assertIn("/F", command)
+
+    def test_session_list_includes_project_path_and_resume_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_projects_dir = server.PROJECTS_DIR
+            original_cache_dir = server.CACHE_DIR
+            try:
+                root = Path(tmp)
+                server.PROJECTS_DIR = root / "projects"
+                server.CACHE_DIR = root / "cache"
+                project_id = "D--code-myweb-English"
+                project_dir = server.PROJECTS_DIR / project_id
+                project_dir.mkdir(parents=True)
+                session_file = project_dir / "abc123.jsonl"
+                session_file.write_text(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": "u1",
+                            "timestamp": "2026-06-28T07:30:00",
+                            "message": {"content": "hello"},
+                        }
+                    ) + "\n",
+                    encoding="utf-8",
+                )
+
+                sessions = server.get_sessions_list(project_id)
+
+                self.assertEqual(sessions[0]["projectPath"], "D:\\code\\myweb\\English")
+                self.assertEqual(sessions[0]["resumeCommand"], 'cd /d "D:\\code\\myweb\\English" && claude -r abc123')
+            finally:
+                server.PROJECTS_DIR = original_projects_dir
+                server.CACHE_DIR = original_cache_dir
 
 
 if __name__ == "__main__":

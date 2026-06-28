@@ -34,6 +34,9 @@ SKILL_INSTALLS_PATH = DATA_DIR / "skill_installs.json"
 PROMPT_SETTINGS_PATH = DATA_DIR / "prompt_settings.json"
 QQ_PUSH_CONFIG_PATH = DATA_DIR / "qq_push_config.json"
 QQ_PUSH_RUNS_PATH = DATA_DIR / "qq_push_runs.json"
+AGENT_TASKS_PATH = DATA_DIR / "agent_tasks.json"
+AGENT_CONNECTIONS_PATH = DATA_DIR / "agent_connections.json"
+AGENT_RUNS_PATH = DATA_DIR / "agent_runs.json"
 
 
 def ensure_cache_dir():
@@ -68,6 +71,10 @@ def append_json_record(path, record):
     return records
 
 
+def now_timestamp():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
 def parse_frontmatter(text):
     if not text.startswith("---\n"):
         return {}
@@ -88,6 +95,11 @@ def safe_name(value):
     if not name:
         raise ValueError("Name is required")
     return name
+
+
+def stable_id(prefix, *parts):
+    raw = "-".join(str(part or "") for part in parts) + f"-{int(time.time() * 1000)}"
+    return f"{prefix}-{safe_name(raw)[:80]}"
 
 
 def scan_skill_dir(base_dir, scope):
@@ -316,6 +328,9 @@ def build_local_catalog(project_root=None, claude_dir=None, home_config=None):
         "skillInstalls": read_json_file(SKILL_INSTALLS_PATH, []),
         "promptSettings": load_prompt_settings(),
         "qqPush": load_qq_push_summary(),
+        "agentTasks": read_json_file(AGENT_TASKS_PATH, []),
+        "agentConnections": [sanitize_agent_connection(item) for item in read_json_file(AGENT_CONNECTIONS_PATH, []) if isinstance(item, dict)],
+        "agentRuns": read_json_file(AGENT_RUNS_PATH, []),
         "counts": {
             "mcpServers": len(mcp_servers),
             "skills": len(skills),
@@ -364,6 +379,237 @@ def build_task_command(params):
 
     task_run = f"cmd /c cd /d {cmd_quote(cwd)} && {' '.join(claude_parts)}"
     return f"schtasks /Create /SC {schedule} /TN {cmd_quote(task_name)} /TR {schtasks_quote(task_run)} /ST {start_time}"
+
+
+def validate_cron(cron):
+    value = str(cron or "").strip()
+    fields = value.split()
+    if len(fields) != 5:
+        raise ValueError("cron must contain exactly five fields")
+    field_pattern = re.compile(r"^[A-Za-z0-9*/,\\-]+$")
+    for field in fields:
+        if not field_pattern.match(field):
+            raise ValueError("cron contains unsupported characters")
+    return value
+
+
+def _cron_field_matches(field, value):
+    if field == "*":
+        return True
+    for part in field.split(","):
+        if part.startswith("*/"):
+            step = int(part[2:])
+            if step <= 0:
+                return False
+            if value % step == 0:
+                return True
+        elif "-" in part:
+            start, end = [int(piece) for piece in part.split("-", 1)]
+            if start <= value <= end:
+                return True
+        elif part.isdigit() and int(part) == value:
+            return True
+    return False
+
+
+def cron_matches(cron, when_tuple=None):
+    cron = validate_cron(cron)
+    if when_tuple is None:
+        now = time.localtime()
+        values = (now.tm_year, now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min)
+    else:
+        values = when_tuple
+    _, month, day, hour, minute = values
+    fields = cron.split()
+    python_wday = time.localtime(time.mktime((values[0], month, day, hour, minute, 0, 0, 0, -1))).tm_wday
+    cron_wday = (python_wday + 1) % 7
+    dow_field = fields[4]
+    dow_matches = _cron_field_matches(dow_field, cron_wday) or (cron_wday == 0 and _cron_field_matches(dow_field, 7))
+    return (
+        _cron_field_matches(fields[0], minute)
+        and _cron_field_matches(fields[1], hour)
+        and _cron_field_matches(fields[2], day)
+        and _cron_field_matches(fields[3], month)
+        and dow_matches
+    )
+
+
+def agent_scheduler_script_path():
+    return Path(__file__).parent / "agent_scheduler.py"
+
+
+def build_agent_scheduler_task_run(script_path=None, python_exe=None):
+    script = Path(script_path or agent_scheduler_script_path())
+    python = python_exe or sys.executable
+    return f"cmd /c {cmd_quote(python)} {cmd_quote(str(script))}"
+
+
+def build_agent_scheduler_task_command(params=None, script_path=None, python_exe=None):
+    params = params or {}
+    task_name = str(params.get("taskName", "Claude Agent Scheduler")).strip() or "Claude Agent Scheduler"
+    command = (
+        f"schtasks /Create /SC MINUTE /MO 1 /TN {cmd_quote(task_name)} "
+        f"/TR {schtasks_quote(build_agent_scheduler_task_run(script_path=script_path, python_exe=python_exe))}"
+    )
+    if params.get("force"):
+        command += " /F"
+    return command
+
+
+def build_agent_scheduler_task_argv(params=None, script_path=None, python_exe=None):
+    params = params or {}
+    task_name = str(params.get("taskName", "Claude Agent Scheduler")).strip() or "Claude Agent Scheduler"
+    argv = [
+        "schtasks",
+        "/Create",
+        "/SC",
+        "MINUTE",
+        "/MO",
+        "1",
+        "/TN",
+        task_name,
+        "/TR",
+        build_agent_scheduler_task_run(script_path=script_path, python_exe=python_exe),
+    ]
+    if params.get("force"):
+        argv.append("/F")
+    return argv
+
+
+def create_agent_scheduler_task(params=None, runner=None):
+    runner = runner or subprocess.run
+    result = runner(build_agent_scheduler_task_argv(params), capture_output=True, text=True, check=False)
+    return {
+        "command": build_agent_scheduler_task_command(params),
+        "returnCode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "created": result.returncode == 0,
+    }
+
+
+def sanitize_agent_connection(record):
+    clean = dict(record)
+    clean.pop("token", None)
+    clean["tokenSet"] = bool(record.get("token"))
+    return clean
+
+
+def save_agent_task(params, path=None):
+    tasks_path = Path(path or AGENT_TASKS_PATH)
+    agent_name = str(params.get("agentName", "")).strip()
+    project_root = str(params.get("projectRoot", "")).strip()
+    name = str(params.get("name", "")).strip()
+    prompt = str(params.get("prompt", "")).strip()
+    cron = validate_cron(params.get("cron", ""))
+    session_policy = str(params.get("sessionPolicy", "new")).strip() or "new"
+    if session_policy not in {"new", "resume"}:
+        raise ValueError("sessionPolicy must be new or resume")
+    if not agent_name or not project_root or not name or not prompt:
+        raise ValueError("agentName, projectRoot, name, and prompt are required")
+    if session_policy == "resume" and not str(params.get("resumeSessionId", "")).strip():
+        raise ValueError("resumeSessionId is required when sessionPolicy is resume")
+
+    tasks = read_json_file(tasks_path, [])
+    if not isinstance(tasks, list):
+        tasks = []
+    task_id = str(params.get("id", "")).strip() or stable_id("task", agent_name, name)
+    existing = next((item for item in tasks if isinstance(item, dict) and item.get("id") == task_id), None)
+    record = {
+        "id": task_id,
+        "agentName": agent_name,
+        "agentPath": str(params.get("agentPath", "")).strip(),
+        "projectRoot": project_root,
+        "name": name,
+        "cron": cron,
+        "enabled": bool(params.get("enabled", True)),
+        "sessionPolicy": session_policy,
+        "resumeSessionId": str(params.get("resumeSessionId", "")).strip(),
+        "prompt": prompt,
+        "connectionIds": params.get("connectionIds") if isinstance(params.get("connectionIds"), list) else [],
+        "createdAt": existing.get("createdAt") if existing else now_timestamp(),
+        "updatedAt": now_timestamp(),
+    }
+    tasks = [item for item in tasks if not (isinstance(item, dict) and item.get("id") == task_id)]
+    tasks.append(record)
+    write_json_file(tasks_path, tasks)
+    return record
+
+
+def build_agent_task_run_command(task):
+    agent_name = safe_name(task.get("agentName", ""))
+    project_root = str(task.get("projectRoot", "")).strip()
+    prompt = str(task.get("prompt", "")).strip()
+    session_policy = str(task.get("sessionPolicy", "new")).strip() or "new"
+    if not project_root or not prompt:
+        raise ValueError("projectRoot and prompt are required")
+    claude_parts = ["claude"]
+    if session_policy == "resume":
+        session_id = str(task.get("resumeSessionId", "")).strip()
+        if not session_id:
+            raise ValueError("resumeSessionId is required when sessionPolicy is resume")
+        claude_parts.extend(["-r", session_id])
+    claude_parts.extend(["--agent", agent_name, cmd_quote(prompt)])
+    return f"cd /d {cmd_quote(project_root)} && {' '.join(claude_parts)}"
+
+
+def save_agent_connection(params, path=None):
+    connection_path = Path(path or AGENT_CONNECTIONS_PATH)
+    agent_name = str(params.get("agentName", "")).strip()
+    project_root = str(params.get("projectRoot", "")).strip()
+    name = str(params.get("name", "")).strip()
+    connection_type = str(params.get("type", "")).strip()
+    endpoint = str(params.get("endpoint", "")).strip()
+    target = str(params.get("target", "")).strip()
+    if not agent_name or not project_root or not name or not connection_type:
+        raise ValueError("agentName, projectRoot, name, and type are required")
+
+    connections = read_json_file(connection_path, [])
+    if not isinstance(connections, list):
+        connections = []
+    connection_id = str(params.get("id", "")).strip() or safe_name(name)
+    existing = next((item for item in connections if isinstance(item, dict) and item.get("id") == connection_id), None)
+    record = {
+        "id": connection_id,
+        "agentName": agent_name,
+        "projectRoot": project_root,
+        "name": name,
+        "type": connection_type,
+        "endpoint": endpoint,
+        "target": target,
+        "token": str(params.get("token", "")).strip() or (existing.get("token", "") if existing else ""),
+        "createdAt": existing.get("createdAt") if existing else now_timestamp(),
+        "updatedAt": now_timestamp(),
+    }
+    connections = [item for item in connections if not (isinstance(item, dict) and item.get("id") == connection_id)]
+    connections.append(record)
+    write_json_file(connection_path, connections)
+    return sanitize_agent_connection(record)
+
+
+def _filter_agent_records(records, agent_name, project_root):
+    return [
+        item for item in records
+        if isinstance(item, dict)
+        and item.get("agentName") == agent_name
+        and item.get("projectRoot") == project_root
+    ]
+
+
+def load_agent_workspace(agent_name, project_root, task_path=None, connection_path=None, run_path=None):
+    agent_name = str(agent_name or "").strip()
+    project_root = str(project_root or "").strip()
+    tasks = read_json_file(Path(task_path or AGENT_TASKS_PATH), [])
+    connections = read_json_file(Path(connection_path or AGENT_CONNECTIONS_PATH), [])
+    runs = read_json_file(Path(run_path or AGENT_RUNS_PATH), [])
+    filtered_connections = _filter_agent_records(connections if isinstance(connections, list) else [], agent_name, project_root)
+    return {
+        "agentName": agent_name,
+        "projectRoot": project_root,
+        "tasks": _filter_agent_records(tasks if isinstance(tasks, list) else [], agent_name, project_root),
+        "connections": [sanitize_agent_connection(item) for item in filtered_connections],
+        "runs": _filter_agent_records(runs if isinstance(runs, list) else [], agent_name, project_root),
+    }
 
 
 def build_task_run(params):
@@ -1219,6 +1465,7 @@ def get_session_cached(session_id, project_id):
 
     # Save to cache
     try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -1233,6 +1480,7 @@ def get_sessions_list(project_id):
     if not project_dir.exists():
         return []
 
+    project_path = decode_project_id(project_id)
     sessions = []
     for jsonl_file in sorted(project_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True):
         session_id = jsonl_file.stem
@@ -1286,6 +1534,9 @@ def get_sessions_list(project_id):
             "messageCount": message_count,
             "lastTimestamp": last_timestamp,
             "fileSize": jsonl_file.stat().st_size,
+            "projectId": project_id,
+            "projectPath": project_path,
+            "resumeCommand": f"cd /d {cmd_quote(project_path)} && claude -r {session_id}",
         })
 
     return sessions
@@ -1326,6 +1577,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             self._json_response(settings)
         elif path == "/api/qq-push":
             self._json_response(load_qq_push_summary())
+        elif path == "/api/agent-workspace":
+            agent_name = params.get("agentName", [""])[0]
+            project_root = params.get("projectRoot", [""])[0]
+            self._json_response(load_agent_workspace(agent_name, project_root))
         elif path == "/api/sessions":
             project_id = params.get("project", [None])[0]
             if not project_id:
@@ -1454,6 +1709,28 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             elif path == "/api/qq-push/run":
                 record = run_qq_push_profile(str(payload.get("profileName", "")).strip())
                 self._json_response(record, 201)
+            elif path == "/api/agent-tasks":
+                record = save_agent_task(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/agent-connections":
+                record = save_agent_connection(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/agent-tasks/scheduler-command":
+                record = {
+                    "command": build_agent_scheduler_task_command(payload),
+                    "createdAt": now_timestamp(),
+                }
+                self._json_response(record, 201)
+            elif path == "/api/agent-tasks/create-scheduler":
+                result = create_agent_scheduler_task(payload)
+                record = dict(payload)
+                record.update(result)
+                record["createdAt"] = now_timestamp()
+                append_json_record(TASKS_PATH, {"type": "agent-scheduler", **record})
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201 if result["created"] else 500)
             else:
                 self._json_response({"error": "Not found"}, 404)
         except json.JSONDecodeError:

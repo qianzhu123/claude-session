@@ -13,6 +13,7 @@
     let cacheHits = 0;
     let cacheMisses = 0;
     let promptSettings = { globalPrompt: '', sessionPrompts: {} };
+    let selectedAgent = null;
 
     // --- DOM refs ---
     const projectSelect = document.getElementById('project-select');
@@ -83,6 +84,16 @@
     const qqCustomModelWrap = document.getElementById('qq-custom-model-wrap');
     const qqPayloadPreset = document.getElementById('qq-payload-preset');
     const qqPayloadTemplateWrap = document.getElementById('qq-payload-template-wrap');
+    const toggleLocalToolsBtn = document.getElementById('toggle-local-tools-btn');
+    const selectedAgentName = document.getElementById('selected-agent-name');
+    const selectedAgentPath = document.getElementById('selected-agent-path');
+    const selectedAgentSummary = document.getElementById('selected-agent-summary');
+    const agentTaskList = document.getElementById('agent-task-list');
+    const agentConnectionList = document.getElementById('agent-connection-list');
+    const saveAgentTaskBtn = document.getElementById('save-agent-task-btn');
+    const createAgentSchedulerBtn = document.getElementById('create-agent-scheduler-btn');
+    const agentSchedulerCommand = document.getElementById('agent-scheduler-command');
+    const saveAgentConnectionBtn = document.getElementById('save-agent-connection-btn');
 
     // --- API helpers ---
     async function api(url) {
@@ -376,6 +387,60 @@
         });
     }
 
+    function agentPayloadBase() {
+        if (!selectedAgent) throw new Error('请先选择 Agent');
+        return {
+            agentName: selectedAgent.name,
+            agentPath: selectedAgent.path,
+            projectRoot: selectedAgent.projectRoot || currentCatalogRoot(),
+        };
+    }
+
+    function setAgentGatedVisible(visible) {
+        document.querySelectorAll('.agent-gated').forEach(section => {
+            section.classList.toggle('is-locked', !visible);
+        });
+    }
+
+    function renderAgentWorkspace(workspace) {
+        if (!agentTaskList || !agentConnectionList) return;
+        const tasks = workspace?.tasks || [];
+        const connections = workspace?.connections || [];
+        renderResourceList(agentTaskList, tasks, '当前 Agent 尚未配置定时任务', item => `
+            <strong>${escapeHtml(item.name || item.id)}</strong>
+            <span>${escapeHtml(item.cron || '')} · ${escapeHtml(item.sessionPolicy || 'new')}</span>
+            <code>${escapeHtml(item.prompt || '')}</code>
+        `);
+        renderResourceList(agentConnectionList, connections, '当前 Agent 尚未配置连接', item => `
+            <strong>${escapeHtml(item.name || item.id)}</strong>
+            <span>${escapeHtml(item.type || '')} · ${item.tokenSet ? 'Token 已保存' : '无 Token'}</span>
+            <code>${escapeHtml(item.endpoint || item.target || '')}</code>
+        `);
+    }
+
+    async function selectAgent(agent) {
+        selectedAgent = {
+            name: agent.name,
+            path: agent.path,
+            scope: agent.scope,
+            description: agent.description || '',
+            projectRoot: currentCatalogRoot(),
+        };
+        if (selectedAgentName) selectedAgentName.textContent = selectedAgent.name;
+        if (selectedAgentPath) selectedAgentPath.textContent = selectedAgent.path || '';
+        if (selectedAgentSummary) {
+            selectedAgentSummary.textContent = `${selectedAgent.name} 已选中。现在可以配置 Cron 定时任务、连接和运行策略。`;
+        }
+        setAgentGatedVisible(true);
+        try {
+            const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(selectedAgent.name)}&projectRoot=${encodeURIComponent(selectedAgent.projectRoot)}`);
+            renderAgentWorkspace(workspace);
+        } catch (e) {
+            showToast(`读取 Agent 工作区失败：${e.message}`);
+        }
+        document.getElementById('selected-agent-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function renderLocalCatalog(catalog) {
         if (!catalog || !catalog.counts) return;
         const counts = catalog.counts;
@@ -404,6 +469,7 @@
             <strong>${escapeHtml(item.name)}</strong>
             <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
             <code>${escapeHtml(item.path || '')}</code>
+            <button class="btn-mini" data-select-agent="${escapeHtml(item.name)}" data-agent-path="${escapeHtml(item.path || '')}" data-agent-scope="${escapeHtml(item.scope || '')}" data-agent-description="${escapeHtml(item.description || '')}">选择</button>
         `);
         renderResourceList(commandList, catalog.commands, '未发现本地 slash command', item => `
             <strong>/${escapeHtml(item.name)}</strong>
@@ -536,6 +602,7 @@
 
             card.innerHTML = `
                 <div class="session-card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
+                <div class="session-project" title="${escapeHtml(s.projectPath || '')}">${escapeHtml(s.projectPath || currentProjectPath || '')}</div>
                 <div class="session-card-meta">
                     <span class="msg-count">${s.messageCount} 条</span>
                     <span class="time">${formatTime(s.lastTimestamp)}</span>
@@ -591,7 +658,8 @@
             metaCache.className = 'meta-badge ' + (data.cacheHit ? 'cache-hit' : 'cache-miss');
 
             // Update resume command
-            resumeCmd.textContent = `claude -r ${id}`;
+            const sessionMeta = sessionsData.find(s => s.id === id);
+            resumeCmd.textContent = sessionMeta?.resumeCommand || `cd /d ${quoteArg(currentProjectPath)} && claude -r ${id}`;
             if (agentSessionId) {
                 agentSessionId.value = id;
                 if (agentMode) agentMode.value = 'resume';
@@ -878,6 +946,27 @@
         showToast('已填入 Skill 安装表单');
     });
 
+    document.addEventListener('click', (e) => {
+        const agentButton = e.target.closest('[data-select-agent]');
+        if (!agentButton) return;
+        selectAgent({
+            name: agentButton.dataset.selectAgent || '',
+            path: agentButton.dataset.agentPath || '',
+            scope: agentButton.dataset.agentScope || '',
+            description: agentButton.dataset.agentDescription || '',
+        });
+    });
+
+    if (toggleLocalToolsBtn) {
+        toggleLocalToolsBtn.addEventListener('click', () => {
+            const collapsed = document.querySelector('#mcp-skill-manager')?.classList.contains('is-collapsed');
+            document.querySelectorAll('.secondary-tools').forEach(section => {
+                section.classList.toggle('is-collapsed', !collapsed);
+            });
+            toggleLocalToolsBtn.textContent = collapsed ? '隐藏本地工具' : '显示本地工具';
+        });
+    }
+
     if (saveTaskBtn) {
         saveTaskBtn.addEventListener('click', async () => {
             try {
@@ -946,6 +1035,65 @@
                 loadLocalCatalog(true);
             } catch (e) {
                 showToast(`Agent 参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (saveAgentTaskBtn) {
+        saveAgentTaskBtn.addEventListener('click', async () => {
+            try {
+                const base = agentPayloadBase();
+                const result = await apiPost('/api/agent-tasks', {
+                    ...base,
+                    name: readValue('agent-task-name'),
+                    cron: readValue('agent-task-cron'),
+                    sessionPolicy: readValue('agent-task-session-policy') || 'new',
+                    resumeSessionId: readValue('agent-task-resume-session'),
+                    prompt: readValue('agent-task-prompt'),
+                    enabled: true,
+                });
+                showToast(`Agent 任务已保存：${result.name}`);
+                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
+                renderAgentWorkspace(workspace);
+            } catch (e) {
+                showToast(`保存 Agent 任务失败：${e.message}`);
+            }
+        });
+    }
+
+    if (createAgentSchedulerBtn) {
+        createAgentSchedulerBtn.addEventListener('click', async () => {
+            if (!confirm('将创建一个每分钟运行的 Windows Scheduler，用于检查 Agent cron 任务。是否继续？')) return;
+            try {
+                const result = await apiPost('/api/agent-tasks/create-scheduler', {
+                    taskName: 'Claude Agent Scheduler',
+                    force: true,
+                });
+                if (agentSchedulerCommand) agentSchedulerCommand.textContent = result.command;
+                showToast(result.created ? 'Agent Cron Scheduler 已创建' : 'Agent Cron Scheduler 创建失败');
+            } catch (e) {
+                showToast(`创建 Scheduler 失败：${e.message}`);
+            }
+        });
+    }
+
+    if (saveAgentConnectionBtn) {
+        saveAgentConnectionBtn.addEventListener('click', async () => {
+            try {
+                const base = agentPayloadBase();
+                const result = await apiPost('/api/agent-connections', {
+                    ...base,
+                    name: readValue('agent-connection-name'),
+                    type: readValue('agent-connection-type'),
+                    endpoint: readValue('agent-connection-endpoint'),
+                    target: readValue('agent-connection-target'),
+                    token: readValue('agent-connection-token'),
+                });
+                showToast(`连接已保存：${result.name}`);
+                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
+                renderAgentWorkspace(workspace);
+            } catch (e) {
+                showToast(`保存连接失败：${e.message}`);
             }
         });
     }

@@ -72,6 +72,7 @@
                             <div class="hero-actions">
                                 <button class="btn-primary" data-copy="#generated-agent-command">复制当前命令</button>
                                 <button class="btn-secondary" id="refresh-local-btn">刷新本地索引</button>
+                                <button class="btn-secondary" id="toggle-local-tools-btn">显示本地工具</button>
                                 <button class="btn-secondary" id="focus-search-btn">选择会话</button>
                             </div>
                         </div>
@@ -153,7 +154,63 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section" id="mcp-skill-manager">
+                    <section class="workspace-section agent-gated is-locked" id="selected-agent-panel">
+                        <div class="section-heading">
+                            <h2>选中智能体</h2>
+                            <p id="selected-agent-summary">选择一个 Agent 后，才能配置它的定时任务、QQ/微信连接和运行记录。</p>
+                        </div>
+                        <div class="control-grid">
+                            <article class="control-panel">
+                                <h3 id="selected-agent-name">未选择 Agent</h3>
+                                <div class="resource-row">
+                                    <strong>Agent path</strong>
+                                    <code id="selected-agent-path"></code>
+                                </div>
+                                <div class="resource-list" id="agent-task-list"></div>
+                            </article>
+                            <article class="control-panel dark-control">
+                                <h3>创建 Agent 定时任务</h3>
+                                <div class="form-grid">
+                                    <label><span>任务名称</span><input id="agent-task-name" type="text" placeholder="Daily English Plan"></label>
+                                    <label><span>Cron</span><input id="agent-task-cron" type="text" value="30 7 * * *"></label>
+                                    <label><span>会话策略</span><select id="agent-task-session-policy"><option value="new">每天新建会话</option><option value="resume">恢复指定会话</option></select></label>
+                                    <label><span>恢复会话 ID</span><input id="agent-task-resume-session" type="text" placeholder="仅恢复会话时需要"></label>
+                                    <label class="wide"><span>任务目标</span><textarea id="agent-task-prompt" rows="4" placeholder="输入这个智能体定时执行的目标"></textarea></label>
+                                </div>
+                                <div class="button-row">
+                                    <button class="btn-secondary-on-dark" id="save-agent-task-btn">保存 Agent 任务</button>
+                                    <button class="btn-secondary-on-dark" id="create-agent-scheduler-btn">创建 Cron Scheduler</button>
+                                </div>
+                                <pre class="generated-command"><code id="agent-scheduler-command"></code></pre>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section class="workspace-section agent-gated is-locked" id="agent-connection-panel">
+                        <div class="section-heading">
+                            <h2>智能体连接</h2>
+                            <p>连接绑定到当前智能体，任务执行时可选择推送结果到 QQ、微信推送或 Webhook。</p>
+                        </div>
+                        <div class="control-grid">
+                            <article class="control-panel">
+                                <h3>已有连接</h3>
+                                <div class="resource-list" id="agent-connection-list"></div>
+                            </article>
+                            <article class="control-panel">
+                                <h3>新增连接</h3>
+                                <div class="form-grid">
+                                    <label><span>名称</span><input id="agent-connection-name" type="text" placeholder="qq-main"></label>
+                                    <label><span>类型</span><select id="agent-connection-type"><option value="qq-onebot">QQ OneBot / NapCat</option><option value="wechat-pushplus">微信 PushPlus</option><option value="wechat-serverchan">微信 ServerChan</option><option value="webhook">通用 Webhook</option></select></label>
+                                    <label class="wide"><span>Endpoint</span><input id="agent-connection-endpoint" type="url" placeholder="http://127.0.0.1:3000/send_group_msg"></label>
+                                    <label><span>目标</span><input id="agent-connection-target" type="text" placeholder="group:123456"></label>
+                                    <label><span>Token</span><input id="agent-connection-token" type="password" autocomplete="off" placeholder="只保存到本地 data"></label>
+                                </div>
+                                <button class="btn-secondary" id="save-agent-connection-btn">保存连接</button>
+                            </article>
+                        </div>
+                    </section>
+
+                    <section class="workspace-section secondary-tools is-collapsed" id="mcp-skill-manager">
                         <div class="section-heading">
                             <h2>MCP 与 Skill</h2>
                             <p>MCP 支持粘贴 JSON 生成 <code>add-json</code> 命令；Skill 先支持 Git 仓库安装命令和本地索引。</p>
@@ -192,7 +249,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section" id="prompt-settings-panel">
+                    <section class="workspace-section secondary-tools is-collapsed" id="prompt-settings-panel">
                         <div class="section-heading">
                             <h2>提示词设置</h2>
                             <p>全局提示词会作为默认启动目标；当前会话提示词会覆盖全局值，并自动填入恢复会话命令。</p>
@@ -222,7 +279,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section" id="qq-push-panel">
+                    <section class="workspace-section agent-gated is-locked secondary-tools is-collapsed" id="qq-push-panel">
                         <div class="section-heading">
                             <h2>QQ 推送任务</h2>
                             <p>模型配置和 QQ 机器人参数保存在本地 <code>data/qq_push_config.json</code>；计划任务只引用 profile 名称。</p>
@@ -268,7 +325,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section split-section" id="automation-agent-patterns">
+                    <section class="workspace-section split-section agent-gated is-locked secondary-tools is-collapsed" id="automation-agent-patterns">
                         <div class="callout-card-coral">
                             <h2>定时任务</h2>
                             <div class="form-grid pale-form">
@@ -304,7 +361,7 @@
                         </div>
                     </section>
 
-                    <section class="workspace-section" id="slash-command-guide">
+                    <section class="workspace-section secondary-tools is-collapsed" id="slash-command-guide">
                         <div class="section-heading">
                             <h2>斜杠命令速查</h2>
                             <p>命令会随 Claude Code 版本变化，最终以终端内 <code>/help</code> 输出为准。</p>
