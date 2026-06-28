@@ -70,6 +70,16 @@
     const promptSettingResult = document.getElementById('prompt-setting-result');
     const effectivePromptLabel = document.getElementById('effective-prompt-label');
     const effectivePromptPreview = document.getElementById('effective-prompt-preview');
+    const qqSaveProfileBtn = document.getElementById('qq-save-profile-btn');
+    const qqRunOnceBtn = document.getElementById('qq-run-once-btn');
+    const qqSaveTaskBtn = document.getElementById('qq-save-task-btn');
+    const qqCreateTaskBtn = document.getElementById('qq-create-task-btn');
+    const qqTaskCommand = document.getElementById('qq-task-command');
+    const qqProfileResult = document.getElementById('qq-profile-result');
+    const qqModel = document.getElementById('qq-model');
+    const qqCustomModelWrap = document.getElementById('qq-custom-model-wrap');
+    const qqPayloadPreset = document.getElementById('qq-payload-preset');
+    const qqPayloadTemplateWrap = document.getElementById('qq-payload-template-wrap');
 
     // --- API helpers ---
     async function api(url) {
@@ -278,6 +288,76 @@
         return el ? el.value.trim() : '';
     }
 
+    function setValue(id, value) {
+        const el = document.getElementById(id);
+        if (el && value !== undefined && value !== null) el.value = value;
+    }
+
+    function selectedQqModel() {
+        const model = readValue('qq-model');
+        return model === 'custom' ? readValue('qq-custom-model') : model;
+    }
+
+    function qqProfilePayload() {
+        return {
+            profileName: readValue('qq-profile-name'),
+            apiBaseUrl: readValue('qq-api-base-url'),
+            apiKey: readValue('qq-api-key'),
+            model: selectedQqModel(),
+            botPlatform: readValue('qq-bot-platform'),
+            botEndpoint: readValue('qq-bot-endpoint'),
+            botToken: readValue('qq-bot-token'),
+            sessionId: readValue('qq-session-id'),
+            payloadPreset: readValue('qq-payload-preset'),
+            payloadTemplate: readValue('qq-payload-template'),
+            taskPrompt: readValue('qq-task-prompt'),
+        };
+    }
+
+    function qqTaskPayload() {
+        return {
+            profileName: readValue('qq-profile-name'),
+            taskName: readValue('qq-task-name'),
+            schedule: readValue('qq-task-schedule'),
+            startTime: readValue('qq-task-time'),
+            force: readValue('qq-task-force') === 'true',
+        };
+    }
+
+    function renderQqPushSummary(summary) {
+        const profiles = summary?.profiles || [];
+        const profile = profiles.find(item => item.profileName === readValue('qq-profile-name')) || profiles[0];
+        if (!profile) return;
+        setValue('qq-profile-name', profile.profileName);
+        setValue('qq-api-base-url', profile.apiBaseUrl);
+        setValue('qq-bot-platform', profile.botPlatform || 'generic');
+        setValue('qq-bot-endpoint', profile.botEndpoint);
+        setValue('qq-session-id', profile.sessionId);
+        setValue('qq-payload-preset', profile.payloadPreset || 'generic');
+        setValue('qq-task-prompt', profile.taskPrompt);
+        if (qqModel && [...qqModel.options].some(option => option.value === profile.model)) {
+            setValue('qq-model', profile.model);
+        } else if (profile.model) {
+            setValue('qq-model', 'custom');
+            setValue('qq-custom-model', profile.model);
+        }
+        if (qqProfileResult) {
+            const apiState = profile.apiKeySet ? '模型密钥已保存' : '未保存模型密钥';
+            const botState = profile.botTokenSet ? 'Bot Token 已保存' : '未保存 Bot Token';
+            qqProfileResult.textContent = `${apiState}；${botState}。`;
+        }
+        updateQqConditionalFields();
+    }
+
+    function updateQqConditionalFields() {
+        if (qqCustomModelWrap) {
+            qqCustomModelWrap.style.display = readValue('qq-model') === 'custom' ? '' : 'none';
+        }
+        if (qqPayloadTemplateWrap) {
+            qqPayloadTemplateWrap.style.display = readValue('qq-payload-preset') === 'custom' ? '' : 'none';
+        }
+    }
+
     function renderResourceList(container, items, emptyText, formatter) {
         if (!container) return;
         container.innerHTML = '';
@@ -338,6 +418,9 @@
                 promptSettings = catalog.promptSettings;
                 renderPromptSettings();
                 applyEffectivePrompt();
+            }
+            if (catalog.qqPush) {
+                renderQqPushSummary(catalog.qqPush);
             }
             renderLocalCatalog(catalog);
             if (refresh) showToast('本地索引已刷新');
@@ -848,6 +931,73 @@
         });
     }
 
+    if (qqSaveProfileBtn) {
+        qqSaveProfileBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/qq-push/profile', qqProfilePayload());
+                if (qqProfileResult) {
+                    qqProfileResult.textContent = `已保存 ${result.profileName}；模型密钥：${result.apiKeySet ? '已保存' : '未保存'}；Bot Token：${result.botTokenSet ? '已保存' : '未保存'}。`;
+                }
+                showToast('QQ 推送配置已保存');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`QQ 推送配置保存失败：${e.message}`);
+            }
+        });
+    }
+
+    if (qqRunOnceBtn) {
+        qqRunOnceBtn.addEventListener('click', async () => {
+            if (!confirm('将立即调用模型 API 并向 QQ 机器人接口发送消息。是否继续？')) return;
+            try {
+                await apiPost('/api/qq-push/profile', qqProfilePayload());
+                const result = await apiPost('/api/qq-push/run', { profileName: readValue('qq-profile-name') });
+                if (qqProfileResult) {
+                    qqProfileResult.textContent = `已推送 ${result.profileName}，消息长度 ${result.message.length}。`;
+                }
+                showToast('QQ 推送已执行');
+            } catch (e) {
+                showToast(`QQ 推送失败：${e.message}`);
+            }
+        });
+    }
+
+    if (qqSaveTaskBtn) {
+        qqSaveTaskBtn.addEventListener('click', async () => {
+            try {
+                const result = await apiPost('/api/qq-push/task', qqTaskPayload());
+                qqTaskCommand.textContent = result.command;
+                showToast('QQ 定时任务命令已保存');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`QQ 定时任务参数错误：${e.message}`);
+            }
+        });
+    }
+
+    if (qqCreateTaskBtn) {
+        qqCreateTaskBtn.addEventListener('click', async () => {
+            if (!confirm('将调用 Windows schtasks 创建 QQ 推送计划任务。是否继续？')) return;
+            try {
+                await apiPost('/api/qq-push/profile', qqProfilePayload());
+                const result = await apiPost('/api/qq-push/task/create', qqTaskPayload());
+                qqTaskCommand.textContent = result.command;
+                showToast(result.created ? 'QQ 系统定时任务已创建' : 'QQ 系统定时任务创建失败');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`创建 QQ 系统任务失败：${e.message}`);
+            }
+        });
+    }
+
+    if (qqModel) {
+        qqModel.addEventListener('change', updateQqConditionalFields);
+    }
+
+    if (qqPayloadPreset) {
+        qqPayloadPreset.addEventListener('change', updateQqConditionalFields);
+    }
+
     if (savePromptBtn) {
         savePromptBtn.addEventListener('click', async () => {
             try {
@@ -940,6 +1090,7 @@
 
     // --- Init ---
     buildAgentCommand();
+    updateQqConditionalFields();
     loadLocalCatalog();
     loadProjects();
 })();

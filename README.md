@@ -26,6 +26,7 @@ python server.py
 - 📦 支持根据 Git 仓库 URL 生成 Skill 安装命令
 - ⏱️ 通过表单参数生成 Windows Task Scheduler 或 `/loop` 命令
 - 🤖 通过表单创建项目级或用户级 Agent Markdown 文件
+- 📣 配置 QQ 机器人推送 profile，调用 OpenAI-compatible 模型生成提醒，并创建系统定时任务
 - 🔍 搜索过滤会话
 - 🎨 遵循 Anthropic 设计规范（cream canvas + coral accent）
 
@@ -44,8 +45,10 @@ python server.py
 ## 本地数据
 
 启动 `server.py` 时会扫描当前工作目录和 `~/.claude`，并把本地索引写入 `data/catalog.json`。
-首页表单保存的 MCP JSON 导入记录、Skill 安装记录和定时任务参数也写入 `data/`，用于下次快速读取。
+首页表单保存的 MCP JSON 导入记录、Skill 安装记录、提示词设置、QQ 推送 profile 和定时任务参数也写入 `data/`，用于下次快速读取。
 `data/` 是本机状态目录，已加入 `.gitignore`。
+
+QQ 推送 profile 的 API Key、Bot Token 等敏感字段只保存在 `data/qq_push_config.json`，创建的 Windows 计划任务只引用 profile 名称，不把密钥写入 `schtasks` 命令。
 
 ## 快捷键
 

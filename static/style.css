@@ -830,6 +830,11 @@ body {
     gap: var(--sp-md);
 }
 
+.qq-push-grid {
+    align-items: start;
+    gap: var(--sp-xl);
+}
+
 .catalog-panel,
 .control-panel {
     min-width: 0;
@@ -886,6 +891,14 @@ body {
     display: flex;
     flex-direction: column;
     gap: var(--sp-md);
+}
+
+#qq-push-panel .control-panel {
+    gap: var(--sp-lg);
+}
+
+#qq-push-panel .button-row {
+    margin-top: var(--sp-xs);
 }
 
 .dark-control {

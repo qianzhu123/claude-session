@@ -32,6 +32,8 @@ TASKS_PATH = DATA_DIR / "tasks.json"
 MCP_IMPORTS_PATH = DATA_DIR / "mcp_imports.json"
 SKILL_INSTALLS_PATH = DATA_DIR / "skill_installs.json"
 PROMPT_SETTINGS_PATH = DATA_DIR / "prompt_settings.json"
+QQ_PUSH_CONFIG_PATH = DATA_DIR / "qq_push_config.json"
+QQ_PUSH_RUNS_PATH = DATA_DIR / "qq_push_runs.json"
 
 
 def ensure_cache_dir():
@@ -296,6 +298,7 @@ def build_local_catalog(project_root=None, claude_dir=None, home_config=None):
         "mcpImports": read_json_file(MCP_IMPORTS_PATH, []),
         "skillInstalls": read_json_file(SKILL_INSTALLS_PATH, []),
         "promptSettings": load_prompt_settings(),
+        "qqPush": load_qq_push_summary(),
         "counts": {
             "mcpServers": len(mcp_servers),
             "skills": len(skills),
@@ -395,6 +398,305 @@ def create_windows_task(params, runner=None):
         "stderr": result.stderr,
         "created": result.returncode == 0,
     }
+
+
+def load_qq_push_config(path=None):
+    config_path = Path(path or QQ_PUSH_CONFIG_PATH)
+    config = read_json_file(config_path, {"profiles": {}})
+    if not isinstance(config, dict):
+        config = {}
+    if not isinstance(config.get("profiles"), dict):
+        config["profiles"] = {}
+    return config
+
+
+def write_qq_push_config(config, path=None):
+    config_path = Path(path or QQ_PUSH_CONFIG_PATH)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return config
+
+
+def sanitize_qq_push_profile(profile):
+    return {
+        "profileName": profile.get("profileName", ""),
+        "apiBaseUrl": profile.get("apiBaseUrl", ""),
+        "model": profile.get("model", ""),
+        "botPlatform": profile.get("botPlatform", ""),
+        "botEndpoint": profile.get("botEndpoint", ""),
+        "sessionId": profile.get("sessionId", ""),
+        "payloadPreset": profile.get("payloadPreset", "generic"),
+        "taskPrompt": profile.get("taskPrompt", ""),
+        "apiKeySet": bool(profile.get("apiKey")),
+        "botTokenSet": bool(profile.get("botToken")),
+        "updatedAt": profile.get("updatedAt", ""),
+    }
+
+
+def load_qq_push_summary(path=None):
+    config = load_qq_push_config(path=path)
+    profiles = [
+        sanitize_qq_push_profile(profile)
+        for _, profile in sorted(config.get("profiles", {}).items())
+        if isinstance(profile, dict)
+    ]
+    return {
+        "profiles": profiles,
+        "runs": read_json_file(QQ_PUSH_RUNS_PATH, []),
+    }
+
+
+def save_qq_push_profile(params, path=None):
+    profile_name = str(params.get("profileName", "")).strip()
+    api_base_url = str(params.get("apiBaseUrl", "")).strip().rstrip("/")
+    model = str(params.get("model", "")).strip()
+    api_key = str(params.get("apiKey", "")).strip()
+    bot_endpoint = str(params.get("botEndpoint", "")).strip()
+    session_id = str(params.get("sessionId", "")).strip()
+
+    if not profile_name or not api_base_url or not model:
+        raise ValueError("profileName, apiBaseUrl, and model are required")
+    if not api_base_url.startswith(("http://", "https://")):
+        raise ValueError("apiBaseUrl must start with http:// or https://")
+    if bot_endpoint and not bot_endpoint.startswith(("http://", "https://")):
+        raise ValueError("botEndpoint must start with http:// or https://")
+
+    config = load_qq_push_config(path=path)
+    existing = config["profiles"].get(profile_name, {})
+    if not isinstance(existing, dict):
+        existing = {}
+    profile = {
+        "profileName": profile_name,
+        "apiBaseUrl": api_base_url,
+        "apiKey": api_key or existing.get("apiKey", ""),
+        "model": model,
+        "botPlatform": str(params.get("botPlatform", "generic")).strip() or "generic",
+        "botEndpoint": bot_endpoint,
+        "botToken": str(params.get("botToken", "")).strip() or existing.get("botToken", ""),
+        "sessionId": session_id,
+        "payloadPreset": str(params.get("payloadPreset", "generic")).strip() or "generic",
+        "payloadTemplate": str(params.get("payloadTemplate", "")).strip(),
+        "taskPrompt": str(params.get("taskPrompt", "")).strip(),
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    config["profiles"][profile_name] = profile
+    write_qq_push_config(config, path=path)
+    return sanitize_qq_push_profile(profile)
+
+
+def qq_push_script_path():
+    return Path(__file__).parent / "qq_push_task.py"
+
+
+def build_qq_push_task_run(params, script_path=None, python_exe=None):
+    profile_name = str(params.get("profileName", "")).strip()
+    if not profile_name:
+        raise ValueError("profileName is required")
+    script = Path(script_path or qq_push_script_path())
+    python = python_exe or sys.executable
+    return f"cmd /c {cmd_quote(python)} {cmd_quote(str(script))} --profile {cmd_quote(profile_name)}"
+
+
+def build_qq_push_task_command(params, script_path=None, python_exe=None):
+    task_name = str(params.get("taskName", "")).strip()
+    schedule = str(params.get("schedule", "DAILY")).strip().upper()
+    start_time = str(params.get("startTime", "")).strip()
+    if not task_name or not schedule or not start_time:
+        raise ValueError("taskName, schedule, and startTime are required")
+    command = (
+        f"schtasks /Create /SC {schedule} /TN {cmd_quote(task_name)} "
+        f"/TR {schtasks_quote(build_qq_push_task_run(params, script_path=script_path, python_exe=python_exe))} "
+        f"/ST {start_time}"
+    )
+    if params.get("force"):
+        command += " /F"
+    return command
+
+
+def build_qq_push_task_argv(params, script_path=None, python_exe=None):
+    task_name = str(params.get("taskName", "")).strip()
+    schedule = str(params.get("schedule", "DAILY")).strip().upper()
+    start_time = str(params.get("startTime", "")).strip()
+    if not task_name or not schedule or not start_time:
+        raise ValueError("taskName, schedule, and startTime are required")
+    argv = [
+        "schtasks",
+        "/Create",
+        "/SC",
+        schedule,
+        "/TN",
+        task_name,
+        "/TR",
+        build_qq_push_task_run(params, script_path=script_path, python_exe=python_exe),
+        "/ST",
+        start_time,
+    ]
+    if params.get("force"):
+        argv.append("/F")
+    return argv
+
+
+def create_qq_push_task(params, runner=None):
+    runner = runner or subprocess.run
+    result = runner(build_qq_push_task_argv(params), capture_output=True, text=True, check=False)
+    return {
+        "command": build_qq_push_task_command(params),
+        "returnCode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "created": result.returncode == 0,
+    }
+
+
+def _session_value(session_id):
+    value = str(session_id or "").strip()
+    if ":" in value:
+        return value.split(":", 1)[1]
+    return value
+
+
+def _replace_template_values(value, replacements):
+    if isinstance(value, str):
+        for key, replacement in replacements.items():
+            value = value.replace("{" + key + "}", replacement)
+        return value
+    if isinstance(value, list):
+        return [_replace_template_values(item, replacements) for item in value]
+    if isinstance(value, dict):
+        return {key: _replace_template_values(item, replacements) for key, item in value.items()}
+    return value
+
+
+def render_qq_payload(payload_preset, payload_template, session_id, message):
+    preset = str(payload_preset or "generic").strip()
+    plain_session = _session_value(session_id)
+    if preset == "onebot_group":
+        return {"group_id": plain_session, "message": message}
+    if preset == "onebot_private":
+        return {"user_id": plain_session, "message": message}
+    if preset == "qq_channel":
+        return {"channel_id": plain_session, "content": message}
+    if preset == "custom":
+        if not payload_template:
+            raise ValueError("payloadTemplate is required for custom preset")
+        parsed = json.loads(payload_template)
+        return _replace_template_values(parsed, {"sessionId": session_id, "plainSessionId": plain_session, "message": message})
+    return {"sessionId": session_id, "message": message}
+
+
+def openai_chat_url(api_base_url):
+    base = str(api_base_url or "").strip().rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
+
+
+def http_json_post(url, payload, headers=None, timeout=60):
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", errors="replace")
+        if not body:
+            return {}
+        return json.loads(body)
+
+
+def extract_chat_message(response):
+    choices = response.get("choices", []) if isinstance(response, dict) else []
+    if choices:
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content.strip()
+    return ""
+
+
+def build_qq_push_context():
+    tasks = read_json_file(TASKS_PATH, [])
+    recent_tasks = tasks[-5:] if isinstance(tasks, list) else []
+    lines = ["本地记录的最近任务："]
+    if not recent_tasks:
+        lines.append("- 暂无本地任务记录")
+    for task in recent_tasks:
+        if not isinstance(task, dict):
+            continue
+        name = task.get("taskName") or task.get("profileName") or "unnamed"
+        prompt = task.get("prompt") or task.get("taskPrompt") or task.get("command") or ""
+        lines.append(f"- {name}: {prompt}")
+    return "\n".join(lines)
+
+
+def generate_qq_push_message(profile, http_post=None):
+    http_post = http_post or http_json_post
+    api_key = profile.get("apiKey", "")
+    if not api_key:
+        raise ValueError("apiKey is required for QQ push profile")
+    task_prompt = profile.get("taskPrompt") or "根据本地上下文总结我当前需要做的事项，输出一条适合 QQ 推送的简短提醒。"
+    payload = {
+        "model": profile["model"],
+        "messages": [
+            {
+                "role": "system",
+                "content": "你是一个定时提醒助手。只输出需要推送给用户的内容，保持简洁、可执行。",
+            },
+            {
+                "role": "user",
+                "content": f"{task_prompt}\n\n{build_qq_push_context()}",
+            },
+        ],
+    }
+    response = http_post(
+        openai_chat_url(profile["apiBaseUrl"]),
+        payload,
+        {"Authorization": f"Bearer {api_key}"},
+    )
+    message = extract_chat_message(response)
+    if not message:
+        raise ValueError("model response did not contain a message")
+    return message
+
+
+def send_qq_push_message(profile, message, http_post=None):
+    http_post = http_post or http_json_post
+    endpoint = profile.get("botEndpoint", "")
+    if not endpoint:
+        raise ValueError("botEndpoint is required before sending QQ messages")
+    payload = render_qq_payload(
+        profile.get("payloadPreset", "generic"),
+        profile.get("payloadTemplate", ""),
+        profile.get("sessionId", ""),
+        message,
+    )
+    headers = {}
+    if profile.get("botToken"):
+        headers["Authorization"] = f"Bearer {profile['botToken']}"
+    return http_post(endpoint, payload, headers)
+
+
+def run_qq_push_profile(profile_name, config_path=None, http_post=None):
+    config = load_qq_push_config(path=config_path)
+    profile = config.get("profiles", {}).get(profile_name)
+    if not isinstance(profile, dict):
+        raise ValueError(f"QQ push profile not found: {profile_name}")
+    message = generate_qq_push_message(profile, http_post=http_post)
+    send_result = send_qq_push_message(profile, message, http_post=http_post)
+    record = {
+        "profileName": profile_name,
+        "message": message,
+        "sendResult": send_result,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    append_json_record(QQ_PUSH_RUNS_PATH, record)
+    return record
 
 
 def build_loop_command(params):
@@ -994,6 +1296,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             settings = load_prompt_settings()
             settings["effectivePrompt"] = effective_prompt(session_id)
             self._json_response(settings)
+        elif path == "/api/qq-push":
+            self._json_response(load_qq_push_summary())
         elif path == "/api/sessions":
             project_id = params.get("project", [None])[0]
             if not project_id:
@@ -1086,6 +1390,31 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
             elif path == "/api/agents":
                 record = create_agent_file(payload, project_root=Path(os.getcwd()), claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/qq-push/profile":
+                record = save_qq_push_profile(payload)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/qq-push/task":
+                command = build_qq_push_task_command(payload)
+                record = dict(payload)
+                record["type"] = "qq-push"
+                record["command"] = command
+                record["createdAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                append_json_record(TASKS_PATH, record)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201)
+            elif path == "/api/qq-push/task/create":
+                result = create_qq_push_task(payload)
+                record = dict(payload)
+                record["type"] = "qq-push"
+                record.update(result)
+                record["createdAt"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                append_json_record(TASKS_PATH, record)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(record, 201 if result["created"] else 500)
+            elif path == "/api/qq-push/run":
+                record = run_qq_push_profile(str(payload.get("profileName", "")).strip())
                 self._json_response(record, 201)
             else:
                 self._json_response({"error": "Not found"}, 404)

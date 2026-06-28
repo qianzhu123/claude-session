@@ -303,6 +303,71 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertIn('id="prompt-scope"', html)
         self.assertIn('id="save-prompt-btn"', html)
 
+    def test_home_page_has_qq_push_controls(self):
+        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="qq-profile-name"', html)
+        self.assertIn('id="qq-api-base-url"', html)
+        self.assertIn('id="qq-payload-preset"', html)
+        self.assertIn('id="qq-create-task-btn"', html)
+
+    def test_qq_push_profile_saves_secrets_locally_and_returns_sanitized_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "qq_push_config.json"
+
+            result = server.save_qq_push_profile(
+                {
+                    "profileName": "QQ 4",
+                    "apiBaseUrl": "https://52mx.net",
+                    "apiKey": "sk-secret",
+                    "model": "free/glm-5.1",
+                    "botEndpoint": "http://127.0.0.1:3000/send_group_msg",
+                    "botToken": "bot-secret",
+                    "sessionId": "group:123",
+                    "payloadPreset": "generic",
+                    "taskPrompt": "Summarize my current tasks.",
+                },
+                path=path,
+            )
+
+            self.assertEqual(result["profileName"], "QQ 4")
+            self.assertTrue(result["apiKeySet"])
+            self.assertTrue(result["botTokenSet"])
+            self.assertNotIn("sk-secret", json.dumps(result))
+
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["profiles"]["QQ 4"]["apiKey"], "sk-secret")
+            self.assertEqual(saved["profiles"]["QQ 4"]["botToken"], "bot-secret")
+
+    def test_qq_push_task_command_does_not_expose_secrets(self):
+        command = server.build_qq_push_task_command(
+            {
+                "profileName": "QQ 4",
+                "taskName": "QQ Reminder",
+                "schedule": "DAILY",
+                "startTime": "09:00",
+                "force": True,
+            },
+            script_path=Path("D:/code/myweb/claude-session-viewer/qq_push_task.py"),
+            python_exe="C:/Python/python.exe",
+        )
+
+        self.assertIn('schtasks /Create /SC DAILY /TN "QQ Reminder"', command)
+        self.assertIn("qq_push_task.py", command)
+        self.assertIn("QQ 4", command)
+        self.assertIn("/F", command)
+        self.assertNotIn("sk-", command)
+
+    def test_render_qq_payload_preset_for_onebot_group(self):
+        payload = server.render_qq_payload(
+            "onebot_group",
+            "",
+            session_id="123456",
+            message="Daily summary",
+        )
+
+        self.assertEqual(payload, {"group_id": "123456", "message": "Daily summary"})
+
 
 if __name__ == "__main__":
     unittest.main()

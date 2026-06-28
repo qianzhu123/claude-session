@@ -215,6 +215,52 @@
                         </div>
                     </section>
 
+                    <section class="workspace-section" id="qq-push-panel">
+                        <div class="section-heading">
+                            <h2>QQ 推送任务</h2>
+                            <p>模型配置和 QQ 机器人参数保存在本地 <code>data/qq_push_config.json</code>；计划任务只引用 profile 名称。</p>
+                        </div>
+                        <div class="control-grid qq-push-grid">
+                            <article class="control-panel">
+                                <h3>模型与机器人</h3>
+                                <div class="form-grid">
+                                    <label><span>Profile</span><input id="qq-profile-name" type="text" value="QQ 4"></label>
+                                    <label><span>机器人平台</span><select id="qq-bot-platform"><option value="generic">通用 HTTP/Webhook</option><option value="onebot">OneBot / NapCat</option><option value="openclaw">OpenClaw / 平台适配器</option><option value="astrbot">AstrBot</option><option value="langbot">LangBot</option></select></label>
+                                    <label><span>API 地址</span><input id="qq-api-base-url" type="url" value="https://52mx.net"></label>
+                                    <label><span>模型</span><select id="qq-model"><option value="free/glm-5.1">free/glm-5.1</option><option value="glm-4.5">glm-4.5</option><option value="custom">手动输入</option></select></label>
+                                    <label class="wide" id="qq-custom-model-wrap" style="display:none;"><span>自定义模型</span><input id="qq-custom-model" type="text" placeholder="provider/model"></label>
+                                    <label class="wide"><span>API Key</span><input id="qq-api-key" type="password" autocomplete="off" placeholder="只保存到本地 data 目录，不进入 git"></label>
+                                    <label class="wide"><span>QQ 推送接口</span><input id="qq-bot-endpoint" type="url" placeholder="例如 http://127.0.0.1:3000/send_group_msg"></label>
+                                    <label><span>Bot Token</span><input id="qq-bot-token" type="password" autocomplete="off" placeholder="可选"></label>
+                                    <label><span>Payload</span><select id="qq-payload-preset"><option value="generic">通用：sessionId + message</option><option value="onebot_group">OneBot 群：group_id + message</option><option value="onebot_private">OneBot 私聊：user_id + message</option><option value="qq_channel">频道：channel_id + content</option><option value="custom">自定义 JSON 模板</option></select></label>
+                                    <label class="wide"><span>会话 ID</span><input id="qq-session-id" type="text" placeholder="group:123456、c2c:openid 或 /whoami 返回值"></label>
+                                    <label class="wide" id="qq-payload-template-wrap" style="display:none;"><span>自定义 Payload JSON</span><textarea id="qq-payload-template" rows="4" placeholder='{"sessionId":"{sessionId}","message":"{message}"}'></textarea></label>
+                                    <label class="wide"><span>推送目标</span><textarea id="qq-task-prompt" rows="3" placeholder="读取本地任务和会话记录，推送我今天需要处理的事项，按优先级列出。"></textarea></label>
+                                </div>
+                                <div class="button-row">
+                                    <button class="btn-secondary" id="qq-save-profile-btn">保存推送配置</button>
+                                    <button class="btn-secondary" id="qq-run-once-btn">立即试运行</button>
+                                </div>
+                                <p class="fine-print" id="qq-profile-result">缺少 QQ 推送接口或会话 ID 时可以先保存配置，但不能完成真实推送。</p>
+                            </article>
+                            <article class="control-panel dark-control">
+                                <h3>系统定时任务</h3>
+                                <div class="form-grid">
+                                    <label><span>任务名称</span><input id="qq-task-name" type="text" value="QQ Reminder"></label>
+                                    <label><span>周期</span><select id="qq-task-schedule"><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option><option value="ONCE">Once</option></select></label>
+                                    <label><span>开始时间</span><input id="qq-task-time" type="time" value="09:00"></label>
+                                    <label><span>覆盖同名任务</span><select id="qq-task-force"><option value="">否</option><option value="true">是，使用 /F</option></select></label>
+                                </div>
+                                <div class="button-row">
+                                    <button class="btn-secondary-on-dark" id="qq-save-task-btn">生成并保存任务</button>
+                                    <button class="btn-secondary-on-dark" id="qq-create-task-btn">创建系统定时任务</button>
+                                </div>
+                                <pre class="generated-command"><code id="qq-task-command"></code></pre>
+                                <button class="btn-mini light" data-copy="#qq-task-command">复制 QQ 任务命令</button>
+                            </article>
+                        </div>
+                    </section>
+
                     <section class="workspace-section split-section" id="automation-agent-patterns">
                         <div class="callout-card-coral">
                             <h2>定时任务</h2>
