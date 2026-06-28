@@ -52,6 +52,7 @@
     const skillInstallBtn = document.getElementById('skill-install-btn');
     const skillCloneBtn = document.getElementById('skill-clone-btn');
     const activateSkillBundleBtn = document.getElementById('activate-skill-bundle-btn');
+    const organizeSkillBundleBtn = document.getElementById('organize-skill-bundle-btn');
     const skillCommand = document.getElementById('skill-command');
     const skillActionResult = document.getElementById('skill-action-result');
     const saveTaskBtn = document.getElementById('save-task-btn');
@@ -59,6 +60,7 @@
     const taskCommand = document.getElementById('task-command');
     const createAgentBtn = document.getElementById('create-agent-btn');
     const agentCreateResult = document.getElementById('agent-create-result');
+    const backHomeBtn = document.getElementById('back-home-btn');
 
     // --- API helpers ---
     async function api(url) {
@@ -221,6 +223,14 @@
             command = `cd /d ${quoteArg(cwd)} && ${command}`;
         }
         generatedAgentCommand.textContent = command;
+    }
+
+    function showHome() {
+        currentSessionId = '';
+        document.querySelectorAll('.session-card').forEach(el => el.classList.remove('active'));
+        if (conversationView) conversationView.style.display = 'none';
+        if (welcomeState) welcomeState.style.display = 'flex';
+        if (contentArea) contentArea.scrollTop = 0;
     }
 
     function readValue(id) {
@@ -634,6 +644,30 @@
         });
     }
 
+    if (organizeSkillBundleBtn) {
+        organizeSkillBundleBtn.addEventListener('click', async () => {
+            const bundlePath = readValue('skill-bundle-path');
+            if (!bundlePath) {
+                showToast('请先输入 Bundle 路径');
+                return;
+            }
+            if (!confirm(`将把 Bundle 移出 skills 根目录并保存在 skill-bundles：\n${bundlePath}`)) return;
+            try {
+                const result = await apiPost('/api/skills/organize-bundle', { bundlePath });
+                const bundlePathInput = document.getElementById('skill-bundle-path');
+                if (bundlePathInput) bundlePathInput.value = result.target || bundlePath;
+                if (skillActionResult) {
+                    skillActionResult.textContent = `Bundle 已整理：${result.target}`;
+                }
+                skillCommand.textContent = result.target || '';
+                showToast('Bundle 目录已整理');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Bundle 整理失败：${e.message}`);
+            }
+        });
+    }
+
     if (skillSearchBtn) {
         skillSearchBtn.addEventListener('click', async () => {
             if (!skillSearchResults) return;
@@ -751,6 +785,10 @@
         });
     }
 
+    if (backHomeBtn) {
+        backHomeBtn.addEventListener('click', showHome);
+    }
+
     // --- Event listeners ---
     projectSelect.addEventListener('change', () => {
         currentProject = projectSelect.value;
@@ -779,10 +817,7 @@
         }
         // Escape: go back to welcome
         if (e.key === 'Escape') {
-            currentSessionId = '';
-            document.querySelectorAll('.session-card').forEach(el => el.classList.remove('active'));
-            conversationView.style.display = 'none';
-            welcomeState.style.display = 'flex';
+            showHome();
         }
         // /: focus search
         if (e.key === '/' && !e.ctrlKey && !e.altKey) {

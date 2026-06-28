@@ -1081,6 +1081,10 @@ body {
     border-bottom: 1px solid var(--colors-surface-cream-strong);
 }
 
+.back-home-btn {
+    margin-bottom: var(--sp-md);
+}
+
 .header-info {
     margin-bottom: var(--sp-md);
 }

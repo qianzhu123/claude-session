@@ -170,13 +170,14 @@
                                     <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开来源</button></label>
                                     <label><span>Skill 名称</span><input id="skill-name" type="text" placeholder="repo 名称可自动推断"></label>
                                     <label class="wide"><span>Git 仓库 URL</span><input id="skill-repo" type="text" placeholder="https://github.com/org/skill-repo.git"></label>
-                                    <label class="wide"><span>本地 Bundle 路径</span><input id="skill-bundle-path" type="text" value="C:\Users\Light\.claude\skills\cherrystudio-skills"></label>
+                                    <label class="wide"><span>本地 Bundle 路径</span><input id="skill-bundle-path" type="text" value="C:\Users\Light\.claude\skill-bundles\cherrystudio-skills"></label>
                                 </div>
                                 <div class="search-results" id="skill-search-results"></div>
                                 <div class="button-row">
                                     <button class="btn-secondary" id="skill-install-btn">生成并保存</button>
                                     <button class="btn-secondary" id="skill-clone-btn">直接安装 Git Skill</button>
                                     <button class="btn-secondary" id="activate-skill-bundle-btn">激活本地 Bundle</button>
+                                    <button class="btn-secondary" id="organize-skill-bundle-btn">整理 Bundle 目录</button>
                                 </div>
                                 <pre class="light-command"><code id="skill-command"></code></pre>
                                 <button class="btn-mini" data-copy="#skill-command">复制 Skill 命令</button>
@@ -242,6 +243,7 @@
 
             <div class="conversation-view" id="conversation-view" style="display: none;">
                 <div class="conversation-header" id="conversation-header">
+                    <button class="btn-secondary back-home-btn" id="back-home-btn">返回首页</button>
                     <div class="header-info">
                         <h1 class="conversation-title" id="conversation-title">会话标题</h1>
                         <div class="conversation-meta" id="conversation-meta">

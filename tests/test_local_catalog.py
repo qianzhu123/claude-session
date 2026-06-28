@@ -221,6 +221,35 @@ class LocalCatalogTests(unittest.TestCase):
         ])
         self.assertEqual(result["returnCode"], 0)
 
+    def test_claude_plugins_search_extracts_installable_github_links(self):
+        def fake_fetcher(url):
+            self.assertIn("claude-plugins.com", url)
+            return '<a href="https://github.com/example/pdf-skill">PDF Skill</a>'
+
+        results = server.search_skill_repositories("pdf", source="claude-plugins", fetcher=fake_fetcher)
+
+        self.assertEqual(results[0]["repoUrl"], "https://github.com/example/pdf-skill")
+        self.assertTrue(results[0]["installable"])
+
+    def test_organize_skill_bundle_moves_bundle_out_of_skills_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            claude_home = Path(tmp) / ".claude"
+            bundle = claude_home / "skills" / "cherrystudio-skills"
+            (bundle / "skills" / "pdf").mkdir(parents=True)
+            (bundle / "skills" / "pdf" / "SKILL.md").write_text("# PDF\n", encoding="utf-8")
+
+            result = server.organize_skill_bundle(str(bundle), claude_dir=claude_home)
+
+            self.assertFalse(bundle.exists())
+            self.assertTrue((claude_home / "skill-bundles" / "cherrystudio-skills" / "skills" / "pdf" / "SKILL.md").exists())
+            self.assertEqual(result["status"], "moved")
+
+    def test_home_page_has_return_home_button_for_conversation_view(self):
+        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="back-home-btn"', html)
+        self.assertIn("返回首页", html)
+
 
 if __name__ == "__main__":
     unittest.main()

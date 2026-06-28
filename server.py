@@ -182,6 +182,29 @@ def activate_skill_bundle(bundle_path, claude_dir=None):
     }
 
 
+def organize_skill_bundle(bundle_path, claude_dir=None):
+    claude_dir = Path(claude_dir or CLAUDE_DIR)
+    bundle_dir = Path(bundle_path).expanduser()
+    if not bundle_dir.exists():
+        raise ValueError("bundlePath does not exist")
+    if not find_bundle_skill_dirs(bundle_dir):
+        raise ValueError("No nested SKILL.md files found in bundlePath")
+
+    target_root = claude_dir / "skill-bundles"
+    target_root.mkdir(parents=True, exist_ok=True)
+    target_dir = target_root / bundle_dir.name
+    if target_dir.exists():
+        suffix = time.strftime("%Y%m%d-%H%M%S")
+        target_dir = target_root / f"{bundle_dir.name}-{suffix}"
+
+    shutil.move(str(bundle_dir), str(target_dir))
+    return {
+        "status": "moved",
+        "source": str(bundle_dir),
+        "target": str(target_dir),
+    }
+
+
 def scan_agent_dir(base_dir, scope):
     agents = []
     if not base_dir.exists():
@@ -435,6 +458,22 @@ def github_json_fetcher(url):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def public_url_fetcher(url):
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+        "User-Agent": "claude-session-viewer",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        text = resp.read().decode("utf-8", errors="replace")
+        content_type = resp.headers.get("Content-Type", "")
+        if "json" in content_type.lower():
+            return json.loads(text)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+
+
 def _first_list(data):
     if isinstance(data, list):
         return data
@@ -470,42 +509,89 @@ def _catalog_link_result(source, term, url):
     }]
 
 
+def _github_results_from_text(text, source):
+    if not isinstance(text, str):
+        return []
+    repo_urls = []
+    seen = set()
+    for match in re.finditer(r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)", text):
+        repo_url = f"https://github.com/{match.group(1)}/{match.group(2).removesuffix('.git')}"
+        if repo_url in seen:
+            continue
+        seen.add(repo_url)
+        repo_urls.append(repo_url)
+    results = []
+    for repo_url in repo_urls[:10]:
+        results.append({
+            "name": Path(repo_url).name,
+            "repoUrl": repo_url,
+            "sourceUrl": repo_url,
+            "description": f"GitHub repository discovered from {source}",
+            "stars": "",
+            "source": source,
+            "installable": True,
+        })
+    return results
+
+
+def _github_search_results(term, fetcher, source_label="github"):
+    search_query = f'{term} "SKILL.md" "Claude Code"'
+    encoded = urllib.parse.urlencode({
+        "q": search_query,
+        "sort": "stars",
+        "order": "desc",
+        "per_page": "10",
+    })
+    data = fetcher(f"https://api.github.com/search/repositories?{encoded}")
+    results = []
+    for item in _first_list(data):
+        repo_url = item.get("html_url", "")
+        results.append({
+            "name": item.get("name", ""),
+            "repoUrl": repo_url,
+            "sourceUrl": repo_url,
+            "description": item.get("description", ""),
+            "stars": item.get("stargazers_count", 0),
+            "source": source_label,
+            "installable": bool(repo_url),
+        })
+    return results
+
+
+def _installable_or_github_fallback(results, term, fetcher, source, link_url):
+    if any(item.get("installable") for item in results):
+        return results
+    try:
+        fallback = _github_search_results(term, fetcher, f"{source} fallback")
+        if fallback:
+            return fallback
+    except Exception:
+        pass
+    return results or _catalog_link_result(source, term, link_url)
+
+
 def search_skill_repositories(query, source="github", fetcher=None):
     term = str(query or "").strip()
     if not term:
         raise ValueError("query is required")
-    fetcher = fetcher or github_json_fetcher
+    fetcher = fetcher or public_url_fetcher
     source = str(source or "github").strip().lower()
     results = []
 
     if source == "github":
-        search_query = f'{term} "SKILL.md" "Claude Code"'
-        encoded = urllib.parse.urlencode({
-            "q": search_query,
-            "sort": "stars",
-            "order": "desc",
-            "per_page": "10",
-        })
-        data = fetcher(f"https://api.github.com/search/repositories?{encoded}")
-        for item in _first_list(data):
-            repo_url = item.get("html_url", "")
-            results.append({
-                "name": item.get("name", ""),
-                "repoUrl": repo_url,
-                "sourceUrl": repo_url,
-                "description": item.get("description", ""),
-                "stars": item.get("stargazers_count", 0),
-                "source": "github",
-                "installable": bool(repo_url),
-            })
-        return results
+        return _github_search_results(term, fetcher)
 
     if source == "skills-sh":
         encoded = urllib.parse.urlencode({"q": term})
+        link_url = f"https://skills.sh/search?q={urllib.parse.quote(term)}"
         try:
             data = fetcher(f"https://skills.sh/api/search?{encoded}")
         except Exception:
-            return _catalog_link_result("skills.sh", term, f"https://skills.sh/search?q={urllib.parse.quote(term)}")
+            try:
+                data = fetcher(link_url)
+                return _installable_or_github_fallback(_github_results_from_text(data, "skills.sh"), term, fetcher, "skills.sh", link_url)
+            except Exception:
+                return _installable_or_github_fallback([], term, fetcher, "skills.sh", link_url)
         for item in _first_list(data):
             repo_url = _github_repo_url(item.get("repoUrl") or item.get("repository") or item.get("repo") or item.get("github"))
             source_url = item.get("url") or item.get("href") or repo_url
@@ -518,14 +604,19 @@ def search_skill_repositories(query, source="github", fetcher=None):
                 "source": "skills.sh",
                 "installable": bool(repo_url),
             })
-        return results or _catalog_link_result("skills.sh", term, f"https://skills.sh/search?q={urllib.parse.quote(term)}")
+        return _installable_or_github_fallback(results, term, fetcher, "skills.sh", link_url)
 
     if source == "clawhub":
         encoded = urllib.parse.urlencode({"q": term})
+        link_url = f"https://www.clawhub.dev/search?q={urllib.parse.quote(term)}"
         try:
             data = fetcher(f"https://www.clawhub.dev/api/v1/skills?{encoded}")
         except Exception:
-            return _catalog_link_result("ClawHub", term, f"https://www.clawhub.dev/search?q={urllib.parse.quote(term)}")
+            try:
+                data = fetcher(link_url)
+                return _installable_or_github_fallback(_github_results_from_text(data, "clawhub"), term, fetcher, "clawhub", link_url)
+            except Exception:
+                return _installable_or_github_fallback([], term, fetcher, "clawhub", link_url)
         for item in _first_list(data):
             repo_url = _github_repo_url(item.get("repoUrl") or item.get("repository") or item.get("repo") or item.get("githubUrl"))
             source_url = item.get("url") or item.get("homepage") or repo_url
@@ -538,10 +629,15 @@ def search_skill_repositories(query, source="github", fetcher=None):
                 "source": "clawhub",
                 "installable": bool(repo_url),
             })
-        return results or _catalog_link_result("ClawHub", term, f"https://www.clawhub.dev/search?q={urllib.parse.quote(term)}")
+        return _installable_or_github_fallback(results, term, fetcher, "clawhub", link_url)
 
     if source == "claude-plugins":
-        return _catalog_link_result("claude-plugins", term, f"https://claude-plugins.com/search?q={urllib.parse.quote(term)}")
+        link_url = f"https://claude-plugins.com/search?q={urllib.parse.quote(term)}"
+        try:
+            data = fetcher(link_url)
+            return _installable_or_github_fallback(_github_results_from_text(data, "claude-plugins"), term, fetcher, "claude-plugins", link_url)
+        except Exception:
+            return _installable_or_github_fallback([], term, fetcher, "claude-plugins", link_url)
 
     raise ValueError("Unsupported skill search source")
 
@@ -899,6 +995,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(record, 201 if result["installed"] else 500)
             elif path == "/api/skills/activate-bundle":
                 result = activate_skill_bundle(payload.get("bundlePath", ""), claude_dir=CLAUDE_DIR)
+                refresh_local_catalog(project_root=os.getcwd())
+                self._json_response(result, 201)
+            elif path == "/api/skills/organize-bundle":
+                result = organize_skill_bundle(payload.get("bundlePath", ""), claude_dir=CLAUDE_DIR)
                 refresh_local_catalog(project_root=os.getcwd())
                 self._json_response(result, 201)
             elif path == "/api/skills/search":
