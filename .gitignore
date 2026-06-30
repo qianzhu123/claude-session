@@ -8,3 +8,6 @@ dist/
 build/
 node_modules/
 *.log
+/.__script_to_exe_*.bat
+/claude-session.exe
+/claude-session.lnk
