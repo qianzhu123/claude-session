@@ -1,61 +1,84 @@
-# Claude Code 会话查看器
+# Claude Session Viewer
 
-本地 Web 界面浏览 Claude Code 的会话记录。
+A local web interface for browsing Claude Code session history and managing related local Claude tooling.
 
-## 快速开始
+## Quick Start
 
-双击 `start.bat` 或手动启动：
+Double-click `start.bat`, or start the server manually:
 
 ```bash
 cd D:\code\myweb\claude-session-viewer
 python server.py
 ```
 
-浏览器访问 http://localhost:8080
+Then open http://localhost:8080 in your browser.
 
-## 功能
+## Features
 
-- 📋 浏览所有项目和会话列表
-- 💬 查看完整对话内容（用户消息 + AI 回复）
-- 🔄 智能缓存 — 会话未改变时直接从本地 JSON 缓存读取
-- 📋 一键复制 `claude -r <session-id>` 恢复命令
-- 🧰 首页管理常用 MCP / Skill 下载与查看命令
-- 🛡️ 生成启动或恢复会话命令，可配置权限模式、工作目录和提示词
-- 🗂️ 启动时扫描本地 MCP、Skill、Agent 和 slash command，并保存到 `data/catalog.json`
-- 📥 支持粘贴 MCP JSON 生成 `claude mcp add-json` 命令
-- 📦 支持根据 Git 仓库 URL 生成 Skill 安装命令
-- ⏱️ 通过表单参数生成 Windows Task Scheduler 或 `/loop` 命令
-- 🤖 通过表单创建项目级或用户级 Agent Markdown 文件
-- 📣 配置 QQ 机器人推送 profile，调用 OpenAI-compatible 模型生成提醒，并创建系统定时任务
-- 🔍 搜索过滤会话
-- 🎨 遵循 Anthropic 设计规范（cream canvas + coral accent）
+- Browse Claude Code projects and session lists.
+- View full conversation content, including user messages and assistant replies.
+- Use local JSON caching so unchanged sessions load from cache quickly.
+- Copy `claude -r <session-id>` recovery commands.
+- Manage local MCP servers, skills, agents, and slash commands from the homepage catalog.
+- Generate launch and recovery commands with permission mode, working directory, model, and prompt options.
+- Scan local MCP, skill, agent, and slash command files at startup and persist the index to `data/catalog.json`.
+- Import MCP JSON snippets and generate `claude mcp add-json` commands.
+- Search public skill repositories and generate skill installation commands.
+- Create project-level or user-level Claude agent Markdown files.
+- Edit agent name, description, model, tools, and prompt from the agent detail panel.
+- Create, edit, delete, enable, disable, and run agent-bound scheduled tasks.
+- Discover existing Windows scheduled tasks and daily plan files for the selected agent.
+- Configure QQ push profiles and agent-bound outbound notification workflows.
+- Search and filter sessions.
+- Follow an Anthropic-inspired visual style with a cream canvas and coral accent system.
 
-## 技术栈
+## Tech Stack
 
-- Python 标准库 `http.server`（零第三方依赖）
-- 纯 HTML + CSS + JS（零构建工具）
+- Python standard library `http.server`; no required third-party backend dependency.
+- Plain HTML, CSS, and JavaScript; no build step.
+- Local JSON files for cache, catalog, task, connection, run, and prompt state.
 
-## 缓存机制
+## Cache Model
 
-首次加载会话时解析 JSONL 文件并保存到 `cache/` 目录为 JSON 文件。
-后续加载时通过文件指纹（大小 + 修改时间）判断是否需要重新解析：
-- 未改变 → 直接返回缓存（毫秒级响应）
-- 有改变 → 重新解析并更新缓存
+On first load, the server parses Claude Code JSONL session files and writes normalized JSON cache files into `cache/`.
+On later loads, it compares each session file fingerprint by size and modification time:
 
-## 本地数据
+- Unchanged files return directly from cache.
+- Changed files are parsed again and the cache is refreshed.
 
-启动 `server.py` 时会扫描当前工作目录和 `~/.claude`，并把本地索引写入 `data/catalog.json`。
-首页表单保存的 MCP JSON 导入记录、Skill 安装记录、提示词设置、QQ 推送 profile 和定时任务参数也写入 `data/`，用于下次快速读取。
-`data/` 是本机状态目录，已加入 `.gitignore`。
+## Local Data
 
-QQ 推送 profile 的 API Key、Bot Token 等敏感字段只保存在 `data/qq_push_config.json`，创建的 Windows 计划任务只引用 profile 名称，不把密钥写入 `schtasks` 命令。
+When `server.py` starts, it scans the current working directory and `~/.claude`, then writes the local tool index to `data/catalog.json`.
+Homepage forms and agent workflows also persist local state under `data/`, including MCP import records, skill install records, prompt settings, QQ push profiles, agent tasks, agent connections, and run history.
 
-## 快捷键
+`data/` is machine-local state and is ignored by Git.
 
-- `/` — 聚焦搜索框
-- `Esc` — 返回欢迎页面
-- 在终端使用 `claude -r <session-id>` 恢复对话
+Sensitive QQ push values such as API keys and bot tokens are stored only in `data/qq_push_config.json`.
+Windows scheduled task commands reference profile names instead of embedding secrets directly in `schtasks` commands.
+
+## Agent Automation
+
+Claude agent Markdown files remain the source of truth:
+
+- Project agents: `<projectRoot>/.claude/agents/*.md`
+- User agents: `%USERPROFILE%\.claude\agents\*.md`
+
+The viewer stores automation metadata in local JSON files keyed by agent identity.
+Selecting an agent opens an agent detail workspace where you can inspect or modify:
+
+- Agent prompt and frontmatter settings.
+- Local cron-style task records.
+- Existing Windows scheduled tasks related to the project.
+- Daily plan files and recent run metadata.
+- Agent-bound outbound connection settings.
+
+## Keyboard Shortcuts
+
+- `/` focuses the session search field.
+- `Esc` returns to the welcome page.
+- Use `claude -r <session-id>` in a terminal to resume a session.
 
 ## Git
 
-本目录已初始化为 Git 仓库，默认分支为 `main`。`.gitignore` 会排除本地缓存、Python 编译产物和常见构建输出。
+This directory is a Git repository with `main` as the default branch.
+`.gitignore` excludes local caches, generated launcher artifacts, Python bytecode, and common build outputs.
