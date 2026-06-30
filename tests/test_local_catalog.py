@@ -156,6 +156,34 @@ class LocalCatalogTests(unittest.TestCase):
             config = json.loads(path.read_text(encoding="utf-8"))
             self.assertNotIn("browser", config["mcpServers"])
 
+    def test_mcp_disable_and_enable_moves_definition_between_config_and_disabled_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_disabled_mcp_path = server.DISABLED_MCP_SERVERS_PATH
+            try:
+                server.DISABLED_MCP_SERVERS_PATH = Path(tmp) / "disabled_mcp_servers.json"
+                path = Path(tmp) / ".mcp.json"
+                path.write_text(
+                    json.dumps({"mcpServers": {"browser": {"command": "npx", "args": ["browser-mcp"]}}}),
+                    encoding="utf-8",
+                )
+
+                disabled = server.set_mcp_server_enabled({"name": "browser", "path": str(path), "enabled": False})
+
+                self.assertFalse(disabled["enabled"])
+                config = json.loads(path.read_text(encoding="utf-8"))
+                self.assertNotIn("browser", config["mcpServers"])
+                disabled_records = json.loads(server.DISABLED_MCP_SERVERS_PATH.read_text(encoding="utf-8"))
+                self.assertEqual(disabled_records[0]["definition"]["command"], "npx")
+
+                enabled = server.set_mcp_server_enabled({"name": "browser", "path": str(path), "enabled": True})
+
+                self.assertTrue(enabled["enabled"])
+                config = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(config["mcpServers"]["browser"]["command"], "npx")
+                self.assertEqual(json.loads(server.DISABLED_MCP_SERVERS_PATH.read_text(encoding="utf-8")), [])
+            finally:
+                server.DISABLED_MCP_SERVERS_PATH = original_disabled_mcp_path
+
     def test_skill_search_maps_repository_results(self):
         def fake_fetcher(url):
             self.assertIn("api.github.com/search/repositories", url)
@@ -224,6 +252,38 @@ class LocalCatalogTests(unittest.TestCase):
             self.assertEqual(result["activated"], 0)
             self.assertEqual(result["skipped"], 1)
             self.assertEqual((claude_home / "skills" / "pdf" / "SKILL.md").read_text(encoding="utf-8"), "# PDF existing\n")
+
+    def test_skill_disable_and_enable_moves_directory_out_of_active_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original_data_dir = server.DATA_DIR
+            original_disabled_skills_path = server.DISABLED_SKILLS_PATH
+            try:
+                root = Path(tmp)
+                server.DATA_DIR = root / "data"
+                server.DISABLED_SKILLS_PATH = server.DATA_DIR / "disabled_skills.json"
+                project = root / "project"
+                skill_dir = project / ".claude" / "skills" / "writer"
+                skill_dir.mkdir(parents=True)
+                (skill_dir / "SKILL.md").write_text(
+                    "---\nname: writer\ndescription: Write drafts\n---\n# Writer\n",
+                    encoding="utf-8",
+                )
+
+                disabled = server.set_skill_enabled({"path": str(skill_dir), "projectRoot": str(project), "enabled": False})
+
+                self.assertFalse(disabled["enabled"])
+                self.assertFalse(skill_dir.exists())
+                disabled_path = Path(disabled["path"])
+                self.assertTrue((disabled_path / "SKILL.md").exists())
+
+                enabled = server.set_skill_enabled({"path": str(disabled_path), "name": "writer", "enabled": True})
+
+                self.assertTrue(enabled["enabled"])
+                self.assertTrue((skill_dir / "SKILL.md").exists())
+                self.assertEqual(json.loads(server.DISABLED_SKILLS_PATH.read_text(encoding="utf-8")), [])
+            finally:
+                server.DATA_DIR = original_data_dir
+                server.DISABLED_SKILLS_PATH = original_disabled_skills_path
 
     def test_create_windows_task_executes_schtasks_with_arguments(self):
         runner = Mock()
@@ -368,20 +428,27 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertIn('id="back-home-btn"', html)
         self.assertIn("返回首页", html)
 
-    def test_home_page_uses_unified_skill_search_and_prompt_controls(self):
-        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+    def test_home_page_uses_unified_catalog_and_agent_prompt_controls(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "static" / "index.html").read_text(encoding="utf-8")
+        js = (root / "static" / "app.js").read_text(encoding="utf-8")
 
         self.assertNotIn('id="skill-search-source"', html)
-        self.assertIn('id="prompt-scope"', html)
-        self.assertIn('id="save-prompt-btn"', html)
+        self.assertIn('id="catalog-kind-tabs"', html)
+        self.assertIn('data-catalog-kind="skills"', html)
+        self.assertIn('id="agent-prompt"', html)
+        self.assertIn('id="agent-detail-prompt"', js)
+        self.assertIn('id="agent-detail-save"', js)
 
-    def test_home_page_has_qq_push_controls(self):
-        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+    def test_home_page_keeps_qq_push_controls_out_of_initial_view(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "static" / "index.html").read_text(encoding="utf-8")
+        css = (root / "static" / "style.css").read_text(encoding="utf-8")
 
-        self.assertIn('id="qq-profile-name"', html)
-        self.assertIn('id="qq-api-base-url"', html)
-        self.assertIn('id="qq-payload-preset"', html)
-        self.assertIn('id="qq-create-task-btn"', html)
+        self.assertNotIn('id="qq-profile-name"', html)
+        self.assertNotIn('id="qq-api-base-url"', html)
+        self.assertNotIn('id="qq-payload-preset"', html)
+        self.assertIn("#qq-push-panel", css)
 
     def test_home_page_has_local_catalog_project_root_control(self):
         html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
@@ -391,13 +458,18 @@ class LocalCatalogTests(unittest.TestCase):
         self.assertNotIn('id="use-selected-project-root-btn"', html)
 
     def test_home_page_has_resource_action_modal_and_context_menu(self):
-        html = (Path(__file__).resolve().parents[1] / "static" / "index.html").read_text(encoding="utf-8")
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "static" / "index.html").read_text(encoding="utf-8")
+        js = (root / "static" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="open-mcp-modal-btn"', html)
-        self.assertIn('id="open-skill-modal-btn"', html)
         self.assertIn('id="context-menu"', html)
-        self.assertIn('id="action-modal"', html)
-        self.assertNotIn('id="refresh-local-btn"', html)
+        self.assertIn("function showContextMenu", js)
+        self.assertIn("'/api/mcp/enabled'", js)
+        self.assertIn("'/api/skills/enabled'", js)
+        self.assertIn("禁用 MCP", js)
+        self.assertIn("禁用 Skill", js)
+        self.assertNotIn('id="open-mcp-modal-btn"', html)
+        self.assertNotIn('id="open-skill-modal-btn"', html)
         self.assertNotIn('id="toggle-local-tools-btn"', html)
         self.assertNotIn('id="focus-search-btn"', html)
 
@@ -405,15 +477,16 @@ class LocalCatalogTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         html = (root / "static" / "index.html").read_text(encoding="utf-8")
         css = (root / "static" / "style.css").read_text(encoding="utf-8")
+        js = (root / "static" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn('id="selected-agent-panel"', html)
-        self.assertIn('id="agent-task-cron"', html)
-        self.assertIn('id="agent-connection-type"', html)
-        self.assertIn('id="external-agent-task-list"', html)
-        self.assertIn('id="agent-daily-plan-list"', html)
+        self.assertIn('id="agent-detail-model"', js)
+        self.assertIn('id="agent-detail-tools"', js)
+        self.assertIn('class="agent-task-cron"', js)
+        self.assertIn('data-external-task', js)
+        self.assertIn('id="agent-detail-plan-content"', js)
         self.assertIn('class="fullpage-dot active"', html)
-        self.assertIn('class="workspace-section agent-gated is-locked fullpage-section"', html)
-        self.assertIn(".agent-gated.is-locked", css)
+        self.assertIn('class="workspace-section local-catalog-section fullpage-section"', html)
+        self.assertIn(".agent-detail-card", css)
         self.assertIn("scroll-snap-type", css)
         self.assertIn("select option", css)
 
@@ -496,6 +569,22 @@ class LocalCatalogTests(unittest.TestCase):
             self.assertEqual(record["cron"], "30 7 * * *")
             self.assertTrue(record["enabled"])
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))[0]["id"], record["id"])
+
+    def test_delete_agent_task_removes_matching_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "agent_tasks.json"
+            server.write_json_file(path, [
+                {"id": "task-1", "agentName": "english-learning-agent", "projectRoot": "D:\\code\\myweb\\English"},
+                {"id": "task-2", "agentName": "other-agent", "projectRoot": "D:\\code\\myweb\\English"},
+            ])
+
+            result = server.delete_agent_task(
+                {"id": "task-1", "agentName": "english-learning-agent", "projectRoot": "D:\\code\\myweb\\English"},
+                path=path,
+            )
+
+            self.assertTrue(result["deleted"])
+            self.assertEqual([item["id"] for item in server.read_json_file(path, [])], ["task-2"])
 
     def test_agent_task_resume_and_new_commands_are_project_aware(self):
         new_command = server.build_agent_task_run_command(

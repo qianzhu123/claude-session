@@ -62,8 +62,6 @@
                     <div class="fullpage-dots" aria-label="首页区块导航">
                         <button class="fullpage-dot active" data-section-target="home-hero" aria-label="启动命令"></button>
                         <button class="fullpage-dot" data-section-target="local-catalog-panel" aria-label="本地索引"></button>
-                        <button class="fullpage-dot agent-gated is-locked" data-section-target="selected-agent-panel" aria-label="智能体任务"></button>
-                        <button class="fullpage-dot agent-gated is-locked" data-section-target="agent-connection-panel" aria-label="智能体连接"></button>
                     </div>
                     <div class="hero-band fullpage-section" id="home-hero">
                         <div class="hero-copy">
@@ -74,9 +72,16 @@
                                 </svg>
                             </div>
                             <h1 class="welcome-title">Claude Code 会话工作台</h1>
-                            <p class="welcome-desc">读取本机 Claude 配置，管理 MCP、Skill、Agent 和定时任务参数；所有命令都由你的输入生成并保存到本地。</p>
+                            <p class="welcome-desc">读取本机 Claude 会话与本地配置索引。本地索引通过分类标签展示 MCP、Skill、Agent、Commands。</p>
                             <div class="hero-actions">
                                 <button class="btn-primary" data-copy="#generated-agent-command">复制当前命令</button>
+                                <button class="btn-secondary" id="recycle-bin-btn" type="button">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;vertical-align:-2px;">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                    </svg>
+                                    会话回收站
+                                </button>
                             </div>
                         </div>
                         <div class="code-window-card" id="agent-command-builder">
@@ -86,6 +91,32 @@
                             </div>
                             <div class="builder-grid">
                                 <label>
+                                    <span>模型</span>
+                                    <select id="agent-model">
+                                        <option value="">默认模型</option>
+                                        <option value="opus">Opus（最新 Opus）</option>
+                                        <option value="sonnet">Sonnet（均衡）</option>
+                                        <option value="haiku">Haiku（快速）</option>
+                                        <option value="fable">Fable（最强）</option>
+                                        <option value="custom">手动输入</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>推理强度</span>
+                                    <select id="agent-effort">
+                                        <option value="">默认</option>
+                                        <option value="low">low</option>
+                                        <option value="medium">medium</option>
+                                        <option value="high">high</option>
+                                        <option value="xhigh">xhigh</option>
+                                        <option value="max">max</option>
+                                    </select>
+                                </label>
+                                <label class="wide" id="agent-custom-model-wrap" style="display:none;">
+                                    <span>自定义模型 ID / alias</span>
+                                    <input id="agent-custom-model" type="text" placeholder="例如 claude-opus-4-8 或 opus">
+                                </label>
+                                <label>
                                     <span>权限</span>
                                     <select id="agent-permission">
                                         <option value="default">默认确认</option>
@@ -93,6 +124,10 @@
                                         <option value="plan">计划模式</option>
                                         <option value="bypassPermissions">跳过权限确认</option>
                                     </select>
+                                </label>
+                                <label>
+                                    <span>会话名称</span>
+                                    <input id="agent-session-name" type="text" placeholder="可选：显示在 /resume">
                                 </label>
                                 <label class="wide">
                                     <span>工作目录</span>
@@ -104,274 +139,57 @@
                                 </label>
                             </div>
                             <pre class="generated-command"><code id="generated-agent-command">claude</code></pre>
-                            <p class="command-note">首页只生成启动新会话命令；恢复命令在进入具体会话后显示。</p>
                         </div>
                     </div>
 
                     <section class="workspace-section local-catalog-section fullpage-section" id="local-catalog-panel">
-                        <div class="section-heading">
-                            <h2>本地索引</h2>
-                            <p id="catalog-updated">启动服务后会扫描本机配置并写入 <code>data/catalog.json</code>。</p>
+                        <div class="section-heading catalog-heading-row">
+                            <div>
+                                <span class="eyebrow-label">Local Index</span>
+                                <h2>本地索引</h2>
+                                <p id="catalog-updated">启动服务后会扫描本机配置并写入 <code>data/catalog.json</code>。</p>
+                            </div>
+                            <button class="btn-secondary" id="refresh-local-btn" type="button">刷新索引</button>
                         </div>
-                        <div class="catalog-root-control">
-                            <label>
-                                <span>本地索引项目</span>
-                                <select id="catalog-project-root-select"></select>
-                            </label>
-                            <label>
-                                <span>项目路径</span>
-                                <input id="catalog-project-root" type="text" placeholder="例如 D:\code\myweb\English">
-                            </label>
-                        </div>
-                        <div class="summary-grid" id="local-summary">
-                            <div><strong>0</strong><span>MCP</span></div>
-                            <div><strong>0</strong><span>Skills</span></div>
-                            <div><strong>0</strong><span>Agents</span></div>
-                            <div><strong>0</strong><span>Commands</span></div>
-                        </div>
-                        <div class="catalog-grid">
-                            <article class="catalog-panel">
-                                <h3>MCP servers</h3>
-                                <div class="resource-list" id="mcp-list"></div>
-                            </article>
-                            <article class="catalog-panel">
-                                <h3>Skills</h3>
-                                <div class="resource-list" id="skill-list"></div>
-                            </article>
-                            <article class="catalog-panel">
-                                <h3>Agents</h3>
-                                <div class="resource-list" id="agent-list"></div>
-                            </article>
-                            <article class="catalog-panel">
-                                <h3>Slash commands</h3>
-                                <div class="resource-list" id="command-list"></div>
-                            </article>
-                        </div>
-                    </section>
 
-                    <section class="workspace-section agent-gated is-locked fullpage-section" id="selected-agent-panel">
-                        <div class="section-heading">
-                            <h2>选中智能体</h2>
-                            <p id="selected-agent-summary">选择一个 Agent 后，才能配置它的定时任务、QQ/微信连接和运行记录。</p>
-                        </div>
-                        <div class="control-grid">
-                            <article class="control-panel">
-                                <h3 id="selected-agent-name">未选择 Agent</h3>
-                                <div class="resource-row">
-                                    <strong>Agent path</strong>
-                                    <code id="selected-agent-path"></code>
-                                </div>
-                                <h4>Viewer Cron 任务</h4>
-                                <div class="resource-list" id="agent-task-list"></div>
-                                <h4>系统计划任务</h4>
-                                <div class="resource-list" id="external-agent-task-list"></div>
-                                <h4>每日计划内容</h4>
-                                <div class="resource-list" id="agent-daily-plan-list"></div>
-                            </article>
-                            <article class="control-panel dark-control">
-                                <h3>创建 Agent 定时任务</h3>
-                                <div class="form-grid">
-                                    <input id="agent-task-id" type="hidden">
-                                    <label><span>任务名称</span><input id="agent-task-name" type="text" placeholder="Daily English Plan"></label>
-                                    <label><span>Cron</span><input id="agent-task-cron" type="text" value="30 7 * * *"></label>
-                                    <label><span>会话策略</span><select id="agent-task-session-policy"><option value="new">每天新建会话</option><option value="resume">恢复指定会话</option></select></label>
-                                    <label><span>状态</span><select id="agent-task-enabled"><option value="true">启用</option><option value="false">停用</option></select></label>
-                                    <label><span>恢复会话 ID</span><input id="agent-task-resume-session" type="text" placeholder="仅恢复会话时需要"></label>
-                                    <label class="wide"><span>任务目标</span><textarea id="agent-task-prompt" rows="4" placeholder="输入这个智能体定时执行的目标"></textarea></label>
-                                </div>
-                                <div class="button-row">
-                                    <button class="btn-secondary-on-dark" id="save-agent-task-btn">保存 Agent 任务</button>
-                                    <button class="btn-secondary-on-dark" id="create-agent-scheduler-btn">创建 Cron Scheduler</button>
-                                </div>
-                                <pre class="generated-command"><code id="agent-scheduler-command"></code></pre>
-                            </article>
-                        </div>
-                    </section>
+                        <div class="catalog-browser-shell">
+                            <div class="catalog-project-card">
+                                <div class="catalog-card-label">本地索引项目</div>
+                                <div class="catalog-project-pills" id="catalog-project-root-pills" aria-label="选择本地索引项目"></div>
+                                <label class="catalog-manual-path">
+                                    <span>或手动输入项目路径</span>
+                                    <input id="catalog-project-root" type="text" placeholder="例如 D:\code\myweb\English">
+                                </label>
+                                <select id="catalog-project-root-select" aria-label="本地索引项目备用选择"></select>
+                            </div>
 
-                    <section class="workspace-section agent-gated is-locked fullpage-section" id="agent-connection-panel">
-                        <div class="section-heading">
-                            <h2>智能体连接</h2>
-                            <p>连接绑定到当前智能体，任务执行时可选择推送结果到 QQ、微信推送或 Webhook。</p>
-                        </div>
-                        <div class="control-grid">
-                            <article class="control-panel">
-                                <h3>已有连接</h3>
-                                <div class="resource-list" id="agent-connection-list"></div>
-                            </article>
-                            <article class="control-panel">
-                                <h3>新增连接</h3>
-                                <div class="form-grid">
-                                    <input id="agent-connection-id" type="hidden">
-                                    <label><span>名称</span><input id="agent-connection-name" type="text" placeholder="qq-main"></label>
-                                    <label><span>类型</span><select id="agent-connection-type"><option value="qq-openapi">QQ 官方机器人 AppID/Secret</option><option value="qq-onebot">QQ OneBot / NapCat</option><option value="wechat-pushplus">微信 PushPlus</option><option value="wechat-serverchan">微信 ServerChan</option><option value="webhook">通用 Webhook</option></select></label>
-                                    <label><span>App ID</span><input id="agent-connection-app-id" type="text" placeholder="QQ 机器人 AppID"></label>
-                                    <label><span>Client Secret</span><input id="agent-connection-app-secret" type="password" autocomplete="off" placeholder="留空则保留已保存 Secret"></label>
-                                    <label class="wide"><span>Endpoint</span><input id="agent-connection-endpoint" type="url" placeholder="http://127.0.0.1:3000/send_group_msg"></label>
-                                    <label><span>目标类型</span><select id="agent-connection-target-type"><option value="group">QQ群</option><option value="user">单聊</option><option value="channel">频道</option><option value="webhook">Webhook</option></select></label>
-                                    <label><span>目标</span><input id="agent-connection-target" type="text" placeholder="group:123456"></label>
-                                    <label><span>Token</span><input id="agent-connection-token" type="password" autocomplete="off" placeholder="OneBot/Webhook 可选，留空保留"></label>
-                                </div>
-                                <button class="btn-secondary" id="save-agent-connection-btn">保存连接</button>
-                            </article>
-                        </div>
-                    </section>
-
-                    <section class="workspace-section" id="mcp-skill-manager">
-                        <div class="section-heading">
-                            <h2>MCP 与 Skill</h2>
-                            <p>MCP 支持粘贴 JSON 生成 <code>add-json</code> 命令；Skill 先支持 Git 仓库安装命令和本地索引。</p>
-                            <div class="button-row">
-                                <button class="btn-secondary" id="open-mcp-modal-btn">添加 MCP</button>
-                                <button class="btn-secondary" id="open-skill-modal-btn">添加 Skill</button>
+                            <div class="catalog-kind-tabs" id="catalog-kind-tabs" aria-label="选择索引类型">
+                                <button class="catalog-kind-card active" type="button" data-catalog-kind="agents">
+                                    <strong data-count-key="agents">0</strong><span>Agents</span><small>子智能体文件</small>
+                                </button>
+                                <button class="catalog-kind-card" type="button" data-catalog-kind="commands">
+                                    <strong data-count-key="commands">0</strong><span>Commands</span><small>斜杠命令</small>
+                                </button>
+                                <button class="catalog-kind-card" type="button" data-catalog-kind="mcp">
+                                    <strong data-count-key="mcpServers">0</strong><span>MCP</span><small>MCP Servers</small>
+                                </button>
+                                <button class="catalog-kind-card" type="button" data-catalog-kind="skills">
+                                    <strong data-count-key="skills">0</strong><span>Skills</span><small>Skills</small>
+                                </button>
                             </div>
                         </div>
-                        <div class="control-grid">
-                            <article class="control-panel dark-control">
-                                <h3>MCP JSON 导入</h3>
-                                <div class="form-grid">
-                                    <label><span>名称</span><input id="mcp-name" type="text" placeholder="browser"></label>
-                                    <label class="wide"><span>JSON</span><textarea id="mcp-json" rows="5" placeholder='{"command":"npx","args":["browser-mcp"]}'></textarea></label>
-                                </div>
-                                <button class="btn-secondary-on-dark" id="mcp-import-btn">生成并保存</button>
-                                <pre class="generated-command"><code id="mcp-command"></code></pre>
-                                <button class="btn-mini light" data-copy="#mcp-command">复制 MCP 命令</button>
-                            </article>
-                            <article class="control-panel">
-                                <h3>Skill 仓库安装</h3>
-                                <div class="form-grid">
-                                    <label class="wide"><span>搜索 Skill 仓库</span><input id="skill-search-query" type="text" placeholder="自动搜索 GitHub、skills.sh、ClawHub、claude-plugins"></label>
-                                    <label class="wide inline-action"><button class="btn-secondary" id="skill-search-btn">搜索公开仓库</button></label>
-                                    <label><span>Skill 名称</span><input id="skill-name" type="text" placeholder="repo 名称可自动推断"></label>
-                                    <label class="wide"><span>Git 仓库 URL</span><input id="skill-repo" type="text" placeholder="https://github.com/org/skill-repo.git"></label>
-                                    <label class="wide"><span>本地 Bundle 路径</span><input id="skill-bundle-path" type="text" value="C:\Users\Light\.claude\skill-bundles\cherrystudio-skills"></label>
-                                </div>
-                                <div class="search-results" id="skill-search-results"></div>
-                                <div class="button-row">
-                                    <button class="btn-secondary" id="skill-install-btn">生成并保存</button>
-                                    <button class="btn-secondary" id="skill-clone-btn">直接安装 Git Skill</button>
-                                    <button class="btn-secondary" id="activate-skill-bundle-btn">激活本地 Bundle</button>
-                                    <button class="btn-secondary" id="organize-skill-bundle-btn">整理 Bundle 目录</button>
-                                </div>
-                                <pre class="light-command"><code id="skill-command"></code></pre>
-                                <button class="btn-mini" data-copy="#skill-command">复制 Skill 命令</button>
-                                <p class="fine-print" id="skill-action-result">自动聚合 GitHub、skills.sh、ClawHub 和 claude-plugins；只有返回 Git 仓库 URL 的结果才允许直接安装。</p>
-                            </article>
-                        </div>
-                    </section>
 
-                    <section class="workspace-section secondary-tools is-collapsed" id="prompt-settings-panel">
-                        <div class="section-heading">
-                            <h2>提示词设置</h2>
-                            <p>全局提示词会作为默认启动目标；当前会话提示词会覆盖全局值，并自动填入恢复会话命令。</p>
-                        </div>
-                        <div class="control-grid prompt-control-grid">
-                            <article class="control-panel">
-                                <h3>全局 / 当前会话</h3>
-                                <div class="form-grid">
-                                    <label><span>范围</span><select id="prompt-scope"><option value="global">全局默认</option><option value="session">当前会话</option></select></label>
-                                    <label><span>会话 ID</span><input id="prompt-session-id" type="text" placeholder="选择会话后自动填充"></label>
-                                    <label class="wide"><span>提示词</span><textarea id="prompt-setting-text" rows="5" placeholder="输入要保存并自动用于启动/恢复会话的提示词"></textarea></label>
+                        <div class="catalog-display-card">
+                            <div class="catalog-display-header">
+                                <div>
+                                    <span class="eyebrow-label" id="catalog-active-kind-label">Agents</span>
+                                    <h3 id="catalog-active-title">选中分类后直接展示</h3>
                                 </div>
-                                <div class="button-row">
-                                    <button class="btn-secondary" id="save-prompt-btn">保存提示词</button>
-                                    <button class="btn-secondary" id="load-effective-prompt-btn">填入当前命令</button>
-                                </div>
-                                <p class="fine-print" id="prompt-setting-result">提示词保存在本地 data/prompt_settings.json。</p>
-                            </article>
-                            <article class="control-panel">
-                                <h3>当前生效</h3>
-                                <div class="resource-row prompt-preview">
-                                    <strong>Effective prompt</strong>
-                                    <span id="effective-prompt-label">未选择会话时使用全局默认。</span>
-                                    <code id="effective-prompt-preview"></code>
-                                </div>
-                            </article>
-                        </div>
-                    </section>
-
-                    <section class="workspace-section agent-gated is-locked secondary-tools is-collapsed" id="qq-push-panel">
-                        <div class="section-heading">
-                            <h2>QQ 推送任务</h2>
-                            <p>模型配置和 QQ 机器人参数保存在本地 <code>data/qq_push_config.json</code>；计划任务只引用 profile 名称。</p>
-                        </div>
-                        <div class="control-grid qq-push-grid">
-                            <article class="control-panel">
-                                <h3>模型与机器人</h3>
-                                <div class="form-grid">
-                                    <label><span>Profile</span><input id="qq-profile-name" type="text" value="QQ 4"></label>
-                                    <label><span>机器人平台</span><select id="qq-bot-platform"><option value="generic">通用 HTTP/Webhook</option><option value="onebot">OneBot / NapCat</option><option value="openclaw">OpenClaw / 平台适配器</option><option value="astrbot">AstrBot</option><option value="langbot">LangBot</option></select></label>
-                                    <label><span>API 地址</span><input id="qq-api-base-url" type="url" value="https://52mx.net"></label>
-                                    <label><span>模型</span><select id="qq-model"><option value="free/glm-5.1">free/glm-5.1</option><option value="glm-4.5">glm-4.5</option><option value="custom">手动输入</option></select></label>
-                                    <label class="wide" id="qq-custom-model-wrap" style="display:none;"><span>自定义模型</span><input id="qq-custom-model" type="text" placeholder="provider/model"></label>
-                                    <label class="wide"><span>API Key</span><input id="qq-api-key" type="password" autocomplete="off" placeholder="只保存到本地 data 目录，不进入 git"></label>
-                                    <label class="wide"><span>QQ 推送接口</span><input id="qq-bot-endpoint" type="url" placeholder="例如 http://127.0.0.1:3000/send_group_msg"></label>
-                                    <label><span>Bot Token</span><input id="qq-bot-token" type="password" autocomplete="off" placeholder="可选"></label>
-                                    <label><span>Payload</span><select id="qq-payload-preset"><option value="generic">通用：sessionId + message</option><option value="onebot_group">OneBot 群：group_id + message</option><option value="onebot_private">OneBot 私聊：user_id + message</option><option value="qq_channel">频道：channel_id + content</option><option value="custom">自定义 JSON 模板</option></select></label>
-                                    <label class="wide"><span>会话 ID</span><input id="qq-session-id" type="text" placeholder="group:123456、c2c:openid 或 /whoami 返回值"></label>
-                                    <label class="wide" id="qq-payload-template-wrap" style="display:none;"><span>自定义 Payload JSON</span><textarea id="qq-payload-template" rows="4" placeholder='{"sessionId":"{sessionId}","message":"{message}"}'></textarea></label>
-                                    <label class="wide"><span>推送目标</span><textarea id="qq-task-prompt" rows="3" placeholder="读取本地任务和会话记录，推送我今天需要处理的事项，按优先级列出。"></textarea></label>
-                                </div>
-                                <div class="button-row">
-                                    <button class="btn-secondary" id="qq-save-profile-btn">保存推送配置</button>
-                                    <button class="btn-secondary" id="qq-run-once-btn">立即试运行</button>
-                                </div>
-                                <p class="fine-print" id="qq-profile-result">缺少 QQ 推送接口或会话 ID 时可以先保存配置，但不能完成真实推送。</p>
-                            </article>
-                            <article class="control-panel dark-control">
-                                <h3>系统定时任务</h3>
-                                <div class="form-grid">
-                                    <label><span>任务名称</span><input id="qq-task-name" type="text" value="QQ Reminder"></label>
-                                    <label><span>周期</span><select id="qq-task-schedule"><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option><option value="ONCE">Once</option></select></label>
-                                    <label><span>开始时间</span><input id="qq-task-time" type="time" value="09:00"></label>
-                                    <label><span>覆盖同名任务</span><select id="qq-task-force"><option value="">否</option><option value="true">是，使用 /F</option></select></label>
-                                </div>
-                                <div class="button-row">
-                                    <button class="btn-secondary-on-dark" id="qq-save-task-btn">生成并保存任务</button>
-                                    <button class="btn-secondary-on-dark" id="qq-create-task-btn">创建系统定时任务</button>
-                                </div>
-                                <pre class="generated-command"><code id="qq-task-command"></code></pre>
-                                <button class="btn-mini light" data-copy="#qq-task-command">复制 QQ 任务命令</button>
-                            </article>
-                        </div>
-                    </section>
-
-                    <section class="workspace-section split-section secondary-tools is-collapsed" id="automation-agent-patterns">
-                        <div class="callout-card-coral">
-                            <h2>定时任务</h2>
-                            <div class="form-grid pale-form">
-                                <label><span>类型</span><select id="task-type"><option value="schtasks">Windows Task Scheduler</option><option value="loop">Claude /loop</option></select></label>
-                                <label><span>任务名称</span><input id="task-name" type="text" placeholder="Claude Daily"></label>
-                                <label><span>周期</span><select id="task-schedule"><option value="DAILY">Daily</option><option value="WEEKLY">Weekly</option><option value="ONCE">Once</option></select></label>
-                                <label><span>开始时间</span><input id="task-time" type="time" value="09:00"></label>
-                                <label><span>/loop 间隔</span><input id="task-interval" type="text" placeholder="30m 或 2h"></label>
-                                <label><span>权限</span><select id="task-permission"><option value="default">默认确认</option><option value="plan">计划模式</option><option value="acceptEdits">自动接受编辑</option><option value="bypassPermissions">跳过确认</option></select></label>
-                                <label><span>覆盖同名任务</span><select id="task-force"><option value="">否</option><option value="true">是，使用 /F</option></select></label>
-                                <label class="wide"><span>工作目录</span><input id="task-cwd" type="text" placeholder="D:\code\myweb\project"></label>
-                                <label class="wide"><span>任务目标</span><textarea id="task-prompt" rows="3" placeholder="输入定时运行时要执行的目标"></textarea></label>
                             </div>
-                            <div class="button-row">
-                                <button class="btn-secondary" id="save-task-btn">生成并保存任务</button>
-                                <button class="btn-secondary" id="create-task-btn">创建系统定时任务</button>
-                            </div>
-                            <pre class="coral-command"><code id="task-command"></code></pre>
-                            <button class="btn-mini invert" data-copy="#task-command">复制任务命令</button>
-                        </div>
-                        <div class="product-mockup-card-dark">
-                            <h2>创建 Agent</h2>
-                            <div class="form-grid">
-                                <input id="create-agent-path" type="hidden">
-                                <label><span>作用域</span><select id="create-agent-scope"><option value="project">项目</option><option value="user">用户</option></select></label>
-                                <label><span>名称</span><input id="create-agent-name" type="text" placeholder="qa-reviewer"></label>
-                                <label class="wide"><span>描述</span><input id="create-agent-description" type="text" placeholder="何时应调用这个 agent"></label>
-                                <label><span>模型</span><select id="create-agent-model"><option value="">默认</option><option value="sonnet">sonnet</option><option value="opus">opus</option><option value="haiku">haiku</option></select></label>
-                                <label><span>工具</span><select id="create-agent-tools"><option value="">默认工具</option><option value="Read, Grep, Glob">只读检索</option><option value="Read, Grep, Glob, Bash">检索 + Bash</option><option value="Read, Grep, Glob, Edit, Bash">编辑 + Bash</option><option value="*">全部工具</option></select></label>
-                                <label class="wide"><span>系统提示词</span><textarea id="create-agent-prompt" rows="5" placeholder="输入这个 agent 的完整职责和边界"></textarea></label>
-                            </div>
-                            <div class="button-row">
-                                <button class="btn-secondary-on-dark" id="create-agent-btn">创建 Agent 文件</button>
-                                <button class="btn-secondary-on-dark" id="update-agent-btn">保存 Agent 修改</button>
-                            </div>
-                            <p class="command-note" id="agent-create-result">Agent 会写入本地 .claude/agents 或用户 agents 目录。</p>
+                            <div class="catalog-panel-list active" id="agent-list"></div>
+                            <div class="catalog-panel-list" id="command-list"></div>
+                            <div class="catalog-panel-list" id="mcp-list"></div>
+                            <div class="catalog-panel-list" id="skill-list"></div>
                         </div>
                     </section>
 
@@ -429,20 +247,6 @@
     </div>
 
     <div class="context-menu" id="context-menu" style="display:none;"></div>
-
-    <div class="modal-backdrop" id="action-modal" style="display:none;">
-        <div class="action-modal-card">
-            <div class="modal-header">
-                <h3 id="action-modal-title">操作</h3>
-                <button class="btn-icon" id="action-modal-close" title="关闭">×</button>
-            </div>
-            <div id="action-modal-body"></div>
-            <div class="button-row modal-actions">
-                <button class="btn-secondary" id="action-modal-cancel">取消</button>
-                <button class="btn-primary" id="action-modal-submit">保存</button>
-            </div>
-        </div>
-    </div>
 
     <script src="app.js"></script>
 </body>

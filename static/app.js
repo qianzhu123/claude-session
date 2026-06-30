@@ -12,8 +12,8 @@
     let sessionsData = [];
     let cacheHits = 0;
     let cacheMisses = 0;
-    let promptSettings = { globalPrompt: '', sessionPrompts: {} };
-    let selectedAgent = null;
+    let activeCatalogKind = 'agents';
+    let currentCatalog = null;
 
     // --- DOM refs ---
     const projectSelect = document.getElementById('project-select');
@@ -25,7 +25,6 @@
     const welcomeState = document.getElementById('welcome-state');
     const conversationView = document.getElementById('conversation-view');
     const conversationTitle = document.getElementById('conversation-title');
-    const conversationMeta = document.getElementById('conversation-meta');
     const metaMessages = document.getElementById('meta-messages');
     const metaTime = document.getElementById('meta-time');
     const metaCache = document.getElementById('meta-cache');
@@ -34,78 +33,29 @@
     const messagesContainer = document.getElementById('messages-container');
     const toast = document.getElementById('toast');
     const toastMsg = document.getElementById('toast-msg');
-    const focusSearchBtn = document.getElementById('focus-search-btn');
     const agentPermission = document.getElementById('agent-permission');
+    const agentModel = document.getElementById('agent-model');
+    const agentEffort = document.getElementById('agent-effort');
+    const agentCustomModelWrap = document.getElementById('agent-custom-model-wrap');
+    const agentCustomModel = document.getElementById('agent-custom-model');
     const agentCwd = document.getElementById('agent-cwd');
     const agentPrompt = document.getElementById('agent-prompt');
+    const agentExtraFlags = document.getElementById('agent-extra-flags');
     const generatedAgentCommand = document.getElementById('generated-agent-command');
     const refreshLocalBtn = document.getElementById('refresh-local-btn');
     const catalogProjectRoot = document.getElementById('catalog-project-root');
     const catalogProjectRootSelect = document.getElementById('catalog-project-root-select');
-    const useSelectedProjectRootBtn = document.getElementById('use-selected-project-root-btn');
+    const catalogProjectRootPills = document.getElementById('catalog-project-root-pills');
+    const catalogKindTabs = document.getElementById('catalog-kind-tabs');
+    const catalogActiveKindLabel = document.getElementById('catalog-active-kind-label');
+    const catalogActiveTitle = document.getElementById('catalog-active-title');
     const catalogUpdated = document.getElementById('catalog-updated');
-    const localSummary = document.getElementById('local-summary');
     const mcpList = document.getElementById('mcp-list');
     const skillList = document.getElementById('skill-list');
     const agentList = document.getElementById('agent-list');
     const commandList = document.getElementById('command-list');
-    const mcpImportBtn = document.getElementById('mcp-import-btn');
-    const mcpCommand = document.getElementById('mcp-command');
-    const skillSearchBtn = document.getElementById('skill-search-btn');
-    const skillSearchResults = document.getElementById('skill-search-results');
-    const skillInstallBtn = document.getElementById('skill-install-btn');
-    const skillCloneBtn = document.getElementById('skill-clone-btn');
-    const activateSkillBundleBtn = document.getElementById('activate-skill-bundle-btn');
-    const organizeSkillBundleBtn = document.getElementById('organize-skill-bundle-btn');
-    const skillCommand = document.getElementById('skill-command');
-    const skillActionResult = document.getElementById('skill-action-result');
-    const saveTaskBtn = document.getElementById('save-task-btn');
-    const createTaskBtn = document.getElementById('create-task-btn');
-    const taskCommand = document.getElementById('task-command');
-    const createAgentBtn = document.getElementById('create-agent-btn');
-    const updateAgentBtn = document.getElementById('update-agent-btn');
-    const agentCreateResult = document.getElementById('agent-create-result');
-    const backHomeBtn = document.getElementById('back-home-btn');
-    const promptScope = document.getElementById('prompt-scope');
-    const promptSessionId = document.getElementById('prompt-session-id');
-    const promptSettingText = document.getElementById('prompt-setting-text');
-    const savePromptBtn = document.getElementById('save-prompt-btn');
-    const loadEffectivePromptBtn = document.getElementById('load-effective-prompt-btn');
-    const promptSettingResult = document.getElementById('prompt-setting-result');
-    const effectivePromptLabel = document.getElementById('effective-prompt-label');
-    const effectivePromptPreview = document.getElementById('effective-prompt-preview');
-    const qqSaveProfileBtn = document.getElementById('qq-save-profile-btn');
-    const qqRunOnceBtn = document.getElementById('qq-run-once-btn');
-    const qqSaveTaskBtn = document.getElementById('qq-save-task-btn');
-    const qqCreateTaskBtn = document.getElementById('qq-create-task-btn');
-    const qqTaskCommand = document.getElementById('qq-task-command');
-    const qqProfileResult = document.getElementById('qq-profile-result');
-    const qqModel = document.getElementById('qq-model');
-    const qqCustomModelWrap = document.getElementById('qq-custom-model-wrap');
-    const qqPayloadPreset = document.getElementById('qq-payload-preset');
-    const qqPayloadTemplateWrap = document.getElementById('qq-payload-template-wrap');
-    const toggleLocalToolsBtn = document.getElementById('toggle-local-tools-btn');
-    const selectedAgentName = document.getElementById('selected-agent-name');
-    const selectedAgentPath = document.getElementById('selected-agent-path');
-    const selectedAgentSummary = document.getElementById('selected-agent-summary');
-    const agentTaskList = document.getElementById('agent-task-list');
-    const externalAgentTaskList = document.getElementById('external-agent-task-list');
-    const agentDailyPlanList = document.getElementById('agent-daily-plan-list');
-    const agentConnectionList = document.getElementById('agent-connection-list');
-    const saveAgentTaskBtn = document.getElementById('save-agent-task-btn');
-    const createAgentSchedulerBtn = document.getElementById('create-agent-scheduler-btn');
-    const agentSchedulerCommand = document.getElementById('agent-scheduler-command');
-    const saveAgentConnectionBtn = document.getElementById('save-agent-connection-btn');
-    const openMcpModalBtn = document.getElementById('open-mcp-modal-btn');
-    const openSkillModalBtn = document.getElementById('open-skill-modal-btn');
     const contextMenu = document.getElementById('context-menu');
-    const actionModal = document.getElementById('action-modal');
-    const actionModalTitle = document.getElementById('action-modal-title');
-    const actionModalBody = document.getElementById('action-modal-body');
-    const actionModalSubmit = document.getElementById('action-modal-submit');
-    const actionModalCancel = document.getElementById('action-modal-cancel');
-    const actionModalClose = document.getElementById('action-modal-close');
-    let modalSubmitHandler = null;
+    const backHomeBtn = document.getElementById('back-home-btn');
 
     // --- API helpers ---
     async function api(url) {
@@ -118,7 +68,7 @@
         const resp = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(payload || {}),
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
@@ -130,7 +80,6 @@
         toastMsg.textContent = msg;
         toast.style.display = 'block';
         toast.style.animation = 'none';
-        // force reflow
         void toast.offsetWidth;
         toast.style.animation = 'toast-in 0.2s ease, toast-out 0.2s ease 1.8s forwards';
         setTimeout(() => {
@@ -138,23 +87,9 @@
         }, 2200);
     }
 
-    function openModal(title, bodyHtml, onSubmit) {
-        if (!actionModal) return;
-        actionModalTitle.textContent = title;
-        actionModalBody.innerHTML = bodyHtml;
-        modalSubmitHandler = onSubmit;
-        actionModal.style.display = 'flex';
-    }
-
-    function closeModal() {
-        if (!actionModal) return;
-        actionModal.style.display = 'none';
-        actionModalBody.innerHTML = '';
-        modalSubmitHandler = null;
-    }
-
     function showContextMenu(x, y, items) {
         if (!contextMenu) return;
+        hideContextMenu();
         contextMenu.innerHTML = '';
         items.forEach(item => {
             const button = document.createElement('button');
@@ -181,19 +116,7 @@
         try {
             const d = new Date(ts);
             if (isNaN(d.getTime())) return ts;
-            const now = new Date();
-            const diffMs = now - d;
-            const diffDays = Math.floor(diffMs / 86400000);
-
-            if (diffDays === 0) {
-                return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-            } else if (diffDays === 1) {
-                return '昨天';
-            } else if (diffDays < 7) {
-                return `${diffDays}天前`;
-            } else {
-                return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-            }
+            return formatTimestamp(ts);
         } catch {
             return ts;
         }
@@ -204,14 +127,8 @@
         try {
             const d = new Date(ts);
             if (isNaN(d.getTime())) return ts;
-            return d.toLocaleString('zh-CN', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-            });
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
         } catch {
             return ts;
         }
@@ -251,15 +168,12 @@
         });
 
         // Paragraphs (double newline)
-        // Split by double newline, wrap non-empty segments in <p>
         const parts = html.split(/\n\n+/);
         html = parts
             .map(part => {
                 part = part.trim();
                 if (!part) return '';
-                // Don't wrap pre/code blocks in <p>
                 if (part.startsWith('<pre>') || part.startsWith('<div class="tool-use')) return part;
-                // Convert single newlines to <br>
                 part = part.replace(/\n/g, '<br>');
                 return `<p>${part}</p>`;
             })
@@ -302,16 +216,38 @@
     function buildAgentCommand() {
         if (!generatedAgentCommand) return;
 
+        const model = agentModel?.value || '';
+        const effort = agentEffort?.value || '';
         const permission = agentPermission?.value || 'default';
         const cwd = agentCwd?.value.trim();
         const prompt = agentPrompt?.value.trim();
+        const extraFlags = agentExtraFlags?.value.trim();
 
         const parts = ['claude'];
+
+        if (model) {
+            if (model === 'custom') {
+                const customModel = agentCustomModel?.value.trim();
+                if (customModel) parts.push('--model', customModel);
+            } else {
+                parts.push('--model', model);
+            }
+        }
+
+        if (effort) {
+            parts.push('--effort', effort);
+        }
+
         if (permission !== 'default') {
             parts.push('--permission-mode', permission);
         }
+
         if (prompt) {
             parts.push(quoteArg(prompt));
+        }
+
+        if (extraFlags) {
+            parts.push(extraFlags);
         }
 
         let command = parts.join(' ');
@@ -321,39 +257,9 @@
         generatedAgentCommand.textContent = command;
     }
 
-    function getEffectivePrompt(sessionId = '') {
-        const sessionPrompt = sessionId && promptSettings.sessionPrompts
-            ? promptSettings.sessionPrompts[sessionId]
-            : '';
-        return sessionPrompt || promptSettings.globalPrompt || '';
-    }
-
-    function renderPromptSettings(sessionId = currentSessionId) {
-        if (promptSessionId) promptSessionId.value = sessionId || '';
-        const prompt = getEffectivePrompt(sessionId);
-        if (effectivePromptPreview) effectivePromptPreview.textContent = prompt;
-        if (effectivePromptLabel) {
-            effectivePromptLabel.textContent = sessionId && promptSettings.sessionPrompts?.[sessionId]
-                ? `当前会话 ${sessionId} 使用会话提示词。`
-                : '当前使用全局默认提示词。';
-        }
-        if (promptSettingText && promptSettingText.dataset.dirty !== 'true') {
-            promptSettingText.value = prompt;
-        }
-    }
-
-    function applyEffectivePrompt(sessionId = currentSessionId) {
-        const prompt = getEffectivePrompt(sessionId);
-        if (prompt && agentPrompt && (agentPrompt.dataset.autoPrompt === 'true' || !agentPrompt.value.trim())) {
-            agentPrompt.value = prompt;
-            agentPrompt.dataset.autoPrompt = 'true';
-            buildAgentCommand();
-        }
-        renderPromptSettings(sessionId);
-    }
-
     function showHome() {
         currentSessionId = '';
+        if (history.replaceState) history.replaceState(null, '', location.pathname);
         document.querySelectorAll('.session-card').forEach(el => el.classList.remove('active'));
         if (conversationView) conversationView.style.display = 'none';
         if (welcomeState) welcomeState.style.display = 'flex';
@@ -382,83 +288,24 @@
         }
     }
 
-    function clearSelectedAgent() {
-        selectedAgent = null;
-        setAgentGatedVisible(false);
-        if (selectedAgentName) selectedAgentName.textContent = '未选择 Agent';
-        if (selectedAgentPath) selectedAgentPath.textContent = '';
-        if (selectedAgentSummary) selectedAgentSummary.textContent = '选择一个 Agent 后，才能配置它的定时任务、QQ/微信连接和运行记录。';
-        [agentTaskList, externalAgentTaskList, agentDailyPlanList, agentConnectionList].forEach(container => {
-            if (container) container.innerHTML = '';
-        });
-    }
-
-    function selectedQqModel() {
-        const model = readValue('qq-model');
-        return model === 'custom' ? readValue('qq-custom-model') : model;
-    }
-
-    function qqProfilePayload() {
-        return {
-            profileName: readValue('qq-profile-name'),
-            apiBaseUrl: readValue('qq-api-base-url'),
-            apiKey: readValue('qq-api-key'),
-            model: selectedQqModel(),
-            botPlatform: readValue('qq-bot-platform'),
-            botEndpoint: readValue('qq-bot-endpoint'),
-            botToken: readValue('qq-bot-token'),
-            sessionId: readValue('qq-session-id'),
-            payloadPreset: readValue('qq-payload-preset'),
-            payloadTemplate: readValue('qq-payload-template'),
-            taskPrompt: readValue('qq-task-prompt'),
-        };
-    }
-
-    function qqTaskPayload() {
-        return {
-            profileName: readValue('qq-profile-name'),
-            taskName: readValue('qq-task-name'),
-            schedule: readValue('qq-task-schedule'),
-            startTime: readValue('qq-task-time'),
-            force: readValue('qq-task-force') === 'true',
-        };
-    }
-
-    function renderQqPushSummary(summary) {
-        const profiles = summary?.profiles || [];
-        const profile = profiles.find(item => item.profileName === readValue('qq-profile-name')) || profiles[0];
-        if (!profile) return;
-        setValue('qq-profile-name', profile.profileName);
-        setValue('qq-api-base-url', profile.apiBaseUrl);
-        setValue('qq-bot-platform', profile.botPlatform || 'generic');
-        setValue('qq-bot-endpoint', profile.botEndpoint);
-        setValue('qq-session-id', profile.sessionId);
-        setValue('qq-payload-preset', profile.payloadPreset || 'generic');
-        setValue('qq-task-prompt', profile.taskPrompt);
-        if (qqModel && [...qqModel.options].some(option => option.value === profile.model)) {
-            setValue('qq-model', profile.model);
-        } else if (profile.model) {
-            setValue('qq-model', 'custom');
-            setValue('qq-custom-model', profile.model);
+    async function openLocalPath(path) {
+        if (!path) {
+            showToast('缺少本地路径');
+            return;
         }
-        if (qqProfileResult) {
-            const apiState = profile.apiKeySet ? '模型密钥已保存' : '未保存模型密钥';
-            const botState = profile.botTokenSet ? 'Bot Token 已保存' : '未保存 Bot Token';
-            qqProfileResult.textContent = `${apiState}；${botState}。`;
-        }
-        updateQqConditionalFields();
-    }
-
-    function updateQqConditionalFields() {
-        if (qqCustomModelWrap) {
-            qqCustomModelWrap.style.display = readValue('qq-model') === 'custom' ? '' : 'none';
-        }
-        if (qqPayloadTemplateWrap) {
-            qqPayloadTemplateWrap.style.display = readValue('qq-payload-preset') === 'custom' ? '' : 'none';
+        try {
+            const resp = await fetch('/api/open-path', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        } catch (e) {
+            showToast(`打开路径失败：${e.message}`);
         }
     }
 
-    function renderResourceList(container, items, emptyText, formatter) {
+    function renderResourceList(container, items, emptyText, formatter, kind = '') {
         if (!container) return;
         container.innerHTML = '';
         if (!items || items.length === 0) {
@@ -467,210 +314,63 @@
         }
         items.slice(0, 20).forEach(item => {
             const row = document.createElement('div');
-            row.className = 'resource-row';
+            row.className = 'resource-row' + (item.disabled ? ' is-disabled' : '');
+            row.dataset.menuKind = kind;
+            row.dataset.menuItem = encodeData(item);
             row.innerHTML = formatter(item);
             container.appendChild(row);
         });
     }
 
-    function agentPayloadBase() {
-        if (!selectedAgent) throw new Error('请先选择 Agent');
-        return {
-            agentName: selectedAgent.name,
-            agentPath: selectedAgent.path,
-            projectRoot: selectedAgent.projectRoot || currentCatalogRoot(),
-        };
-    }
-
-    function setAgentGatedVisible(visible) {
-        document.querySelectorAll('.agent-gated').forEach(section => {
-            section.classList.toggle('is-locked', !visible);
-        });
-    }
-
-    function renderAgentWorkspace(workspace) {
-        if (!agentTaskList || !agentConnectionList) return;
-        const tasks = workspace?.tasks || [];
-        const externalTasks = workspace?.externalTasks || [];
-        const connections = workspace?.connections || [];
-        const detectedConnections = [];
-        const qqTargets = workspace?.dailyPlan?.qqTargets || {};
-        if (qqTargets && Object.keys(qqTargets).length) {
-            const detectedTarget = qqTargets.group || qqTargets.user || qqTargets.channel || qqTargets.last?.target_id || '';
-            const detectedType = qqTargets.group ? 'group' : (qqTargets.user ? 'user' : (qqTargets.channel ? 'channel' : (qqTargets.last?.target_type || 'group')));
-            detectedConnections.push({
-                id: 'detected-qq-openapi',
-                name: '已检测 QQ OpenAPI 连接',
-                type: 'qq-openapi',
-                targetType: detectedType,
-                target: detectedTarget,
-                source: 'Agent_Daily_Plans/qq_targets.json',
-                tokenSet: false,
-                appSecretSet: false,
-            });
-        }
-        renderResourceList(agentTaskList, tasks, '当前 Agent 尚未配置定时任务', item => `
-            <strong>${escapeHtml(item.name || item.id)}</strong>
-            <span>${escapeHtml(item.cron || '')} · ${escapeHtml(item.sessionPolicy || 'new')} · ${item.enabled === false ? '停用' : '启用'}</span>
-            <code>${escapeHtml(item.prompt || '')}</code>
-            <button class="btn-mini" data-edit-agent-task="${escapeHtml(encodeData(item))}">编辑</button>
-        `);
-        renderResourceList(externalAgentTaskList, externalTasks, '当前项目未发现关联的 Windows 计划任务', item => `
-            <strong>${escapeHtml(item.taskName || item.id)}</strong>
-            <span>${escapeHtml(item.state || '')} · ${escapeHtml(item.schedule || '')} · last=${escapeHtml(String(item.lastTaskResult ?? ''))}</span>
-            <code>${escapeHtml([item.command, item.arguments].filter(Boolean).join(' '))}</code>
-            <div class="button-row compact-actions">
-                <button class="btn-mini" data-external-task-action="run" data-external-task-name="${escapeHtml(item.taskName || '')}">运行</button>
-                <button class="btn-mini" data-external-task-action="stop" data-external-task-name="${escapeHtml(item.taskName || '')}">停止</button>
-                <button class="btn-mini" data-external-task-action="enable" data-external-task-name="${escapeHtml(item.taskName || '')}">启用</button>
-                <button class="btn-mini" data-external-task-action="disable" data-external-task-name="${escapeHtml(item.taskName || '')}">停用</button>
-            </div>
-        `);
-        renderDailyPlan(workspace?.dailyPlan);
-        renderResourceList(agentConnectionList, [...detectedConnections, ...connections], '当前 Agent 尚未配置连接', item => `
-            <strong>${escapeHtml(item.name || item.id)}</strong>
-            <span>${escapeHtml(item.type || '')} · ${escapeHtml(item.targetType || '')} · ${item.appSecretSet ? 'Secret 已保存' : '未保存 Secret'} · ${item.tokenSet ? 'Token 已保存' : '无 Token'}</span>
-            <code>${escapeHtml(item.endpoint || item.target || '')}</code>
-            ${item.source ? `<span>${escapeHtml(item.source)}</span>` : ''}
-            <button class="btn-mini" data-edit-agent-connection="${escapeHtml(encodeData(item))}">编辑</button>
-        `);
-    }
-
-    function renderDailyPlan(plan) {
-        if (!agentDailyPlanList) return;
-        if (!plan?.exists) {
-            agentDailyPlanList.innerHTML = '<div class="resource-empty">未发现 Agent_Daily_Plans 目录</div>';
-            return;
-        }
-        const schedule = plan.latestJson?.schedule || {};
-        const rows = Object.entries(schedule).map(([key, item]) => ({
-            key,
-            time: item?.time || '',
-            title: item?.title || key,
-            task: item?.task || '',
-            note: item?.note || '',
-        }));
-        if (!rows.length) {
-            agentDailyPlanList.innerHTML = '<div class="resource-empty">已发现计划目录，但没有可读取的最新计划 JSON</div>';
-            return;
-        }
-        agentDailyPlanList.innerHTML = '';
-        rows.forEach(item => {
-            const row = document.createElement('div');
-            row.className = 'resource-row plan-row';
-            row.innerHTML = `
-                <strong>${escapeHtml(item.time)} ${escapeHtml(item.title)}</strong>
-                <span>${escapeHtml(item.key)}</span>
-                <code>${escapeHtml(item.task)}</code>
-                ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ''}
-            `;
-            agentDailyPlanList.appendChild(row);
-        });
-        if (plan.qqTargets && Object.keys(plan.qqTargets).length) {
-            const row = document.createElement('div');
-            row.className = 'resource-row';
-            row.innerHTML = `
-                <strong>QQ target</strong>
-                <code>${escapeHtml(JSON.stringify(plan.qqTargets))}</code>
-            `;
-            agentDailyPlanList.appendChild(row);
-        }
-    }
-
-    async function selectAgent(agent) {
-        selectedAgent = {
-            name: agent.name,
-            path: agent.path,
-            scope: agent.scope,
-            description: agent.description || '',
-            projectRoot: currentCatalogRoot(),
-        };
-        if (selectedAgentName) selectedAgentName.textContent = selectedAgent.name;
-        if (selectedAgentPath) selectedAgentPath.textContent = selectedAgent.path || '';
-        if (selectedAgentSummary) {
-            selectedAgentSummary.textContent = `${selectedAgent.name} 已选中。现在可以配置 Cron 定时任务、连接和运行策略。`;
-        }
-        setAgentGatedVisible(true);
-        try {
-            const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(selectedAgent.name)}&projectRoot=${encodeURIComponent(selectedAgent.projectRoot)}`);
-            renderAgentWorkspace(workspace);
-        } catch (e) {
-            showToast(`读取 Agent 工作区失败：${e.message}`);
-        }
-        document.getElementById('selected-agent-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    function fillAgentTaskForm(item) {
-        setValue('agent-task-id', item.id || '');
-        setValue('agent-task-name', item.name || '');
-        setValue('agent-task-cron', item.cron || '30 7 * * *');
-        setValue('agent-task-session-policy', item.sessionPolicy || 'new');
-        setValue('agent-task-enabled', item.enabled === false ? 'false' : 'true');
-        setValue('agent-task-resume-session', item.resumeSessionId || '');
-        setValue('agent-task-prompt', item.prompt || '');
-    }
-
-    function fillAgentConnectionForm(item) {
-        setValue('agent-connection-id', item.id === 'detected-qq-openapi' ? '' : (item.id || ''));
-        setValue('agent-connection-name', item.name || '');
-        setValue('agent-connection-type', item.type || 'qq-openapi');
-        setValue('agent-connection-app-id', item.appId || '');
-        setValue('agent-connection-app-secret', '');
-        setValue('agent-connection-endpoint', item.endpoint || '');
-        setValue('agent-connection-target-type', item.targetType || 'group');
-        setValue('agent-connection-target', item.target || '');
-        setValue('agent-connection-token', '');
-    }
-
-    function fillAgentEditor(agent) {
-        setValue('create-agent-path', agent.path || '');
-        setValue('create-agent-name', agent.name || '');
-        setValue('create-agent-description', agent.description || '');
-        setValue('create-agent-model', agent.model || '');
-        setValue('create-agent-tools', agent.tools || '');
-        setValue('create-agent-prompt', agent.prompt || '');
-        if (agentCreateResult) agentCreateResult.textContent = agent.path ? `正在编辑：${agent.path}` : 'Agent 会写入本地 .claude/agents 或用户 agents 目录。';
-    }
-
     function renderLocalCatalog(catalog) {
         if (!catalog || !catalog.counts) return;
+        currentCatalog = catalog;
         const counts = catalog.counts;
         if (catalogUpdated) {
             catalogUpdated.innerHTML = `已读取本地索引：<code>data/catalog.json</code>，更新时间 ${escapeHtml(catalog.generatedAt || '')}`;
         }
-        if (localSummary) {
-            localSummary.innerHTML = `
-                <div><strong>${counts.mcpServers || 0}</strong><span>MCP</span></div>
-                <div><strong>${counts.skills || 0}</strong><span>Skills</span></div>
-                <div><strong>${counts.agents || 0}</strong><span>Agents</span></div>
-                <div><strong>${counts.commands || 0}</strong><span>Commands</span></div>
-            `;
-        }
+        document.querySelectorAll('[data-count-key]').forEach(node => {
+            node.textContent = counts[node.dataset.countKey] || 0;
+        });
         renderResourceList(mcpList, catalog.mcpServers, '未发现本地 MCP 配置', item => `
             <strong>${escapeHtml(item.name)}</strong>
-            <span>${escapeHtml(item.scope)} · ${escapeHtml(item.transport || '')}</span>
+            <span>${item.disabled ? '<b class="resource-status disabled">已禁用</b> · ' : ''}${escapeHtml(item.scope)} · ${escapeHtml(item.transport || '')}</span>
             <code>${escapeHtml(item.command || item.url || item.path || '')}</code>
-            <span class="row-menu-target" data-menu-kind="mcp" data-menu-item="${escapeHtml(encodeData(item))}"></span>
-        `);
+        `, 'mcp');
         renderResourceList(skillList, catalog.skills, '未发现本地 Skill', item => `
             <strong>${escapeHtml(item.name)}</strong>
-            <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
-            <code>${escapeHtml(item.path || '')}</code>
-            <span class="row-menu-target" data-menu-kind="skill" data-menu-item="${escapeHtml(encodeData(item))}"></span>
-        `);
+            <span>${item.disabled ? '<b class="resource-status disabled">已禁用</b> · ' : ''}${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
+            <code>${escapeHtml(item.originalPath || item.path || '')}</code>
+        `, 'skill');
         renderResourceList(agentList, catalog.agents, '未发现本地 Agent', item => `
             <strong>${escapeHtml(item.name)}</strong>
             <span>${escapeHtml(item.scope)} · ${escapeHtml(item.description || 'no description')}</span>
             <code>${escapeHtml(item.path || '')}</code>
-            <button class="btn-mini" data-select-agent="${escapeHtml(item.name)}" data-agent-path="${escapeHtml(item.path || '')}" data-agent-scope="${escapeHtml(item.scope || '')}" data-agent-description="${escapeHtml(item.description || '')}">选择</button>
-            <button class="btn-mini" data-edit-agent-path="${escapeHtml(item.path || '')}">编辑文件</button>
-            <span class="row-menu-target" data-menu-kind="agent" data-menu-item="${escapeHtml(encodeData(item))}"></span>
-        `);
+        `, 'agent');
         renderResourceList(commandList, catalog.commands, '未发现本地 slash command', item => `
             <strong>/${escapeHtml(item.name)}</strong>
             <span>${escapeHtml(item.scope)}</span>
             <code>${escapeHtml(item.path || '')}</code>
-        `);
+        `, 'command');
+        setActiveCatalogKind(activeCatalogKind);
+    }
+
+    function setActiveCatalogKind(kind = 'agents') {
+        activeCatalogKind = kind;
+        const map = {
+            agents: { list: agentList, label: 'Agents', title: '本地 Agent' },
+            commands: { list: commandList, label: 'Commands', title: 'Slash Commands' },
+            mcp: { list: mcpList, label: 'MCP', title: 'MCP Servers' },
+            skills: { list: skillList, label: 'Skills', title: 'Skills' },
+        };
+        Object.entries(map).forEach(([key, meta]) => {
+            meta.list?.classList.toggle('active', key === kind);
+        });
+        document.querySelectorAll('[data-catalog-kind]').forEach(button => {
+            button.classList.toggle('active', button.dataset.catalogKind === kind);
+        });
+        if (catalogActiveKindLabel) catalogActiveKindLabel.textContent = map[kind]?.label || 'Local Index';
+        if (catalogActiveTitle) catalogActiveTitle.textContent = map[kind]?.title || '选中分类后直接展示';
     }
 
     function currentCatalogRoot() {
@@ -681,16 +381,12 @@
         try {
             const projectRoot = currentCatalogRoot();
             const catalog = refresh
-                ? await apiPost('/api/local/refresh', { project: currentProject, projectRoot })
+                ? await (await fetch('/api/local/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project: currentProject, projectRoot }),
+                })).json()
                 : await api(`/api/local/catalog?project=${encodeURIComponent(currentProject)}&projectRoot=${encodeURIComponent(projectRoot)}`);
-            if (catalog.promptSettings) {
-                promptSettings = catalog.promptSettings;
-                renderPromptSettings();
-                applyEffectivePrompt();
-            }
-            if (catalog.qqPush) {
-                renderQqPushSummary(catalog.qqPush);
-            }
             renderLocalCatalog(catalog);
             if (catalogProjectRoot && catalog.projectRoot) {
                 catalogProjectRoot.value = catalog.projectRoot;
@@ -702,159 +398,36 @@
         }
     }
 
-    async function openLocalPath(path) {
-        if (!path) {
-            showToast('缺少本地路径');
-            return;
-        }
-        try {
-            await apiPost('/api/open-path', { path });
-        } catch (e) {
-            showToast(`打开路径失败：${e.message}`);
-        }
-    }
-
-    function openMcpEditor(item = {}) {
-        const definition = item.definition || {};
-        const defaultPath = item.path || `${currentCatalogRoot()}\\.mcp.json`;
-        openModal('添加或编辑 MCP', `
-            <div class="form-grid modal-form">
-                <label><span>名称</span><input id="modal-mcp-name" type="text" value="${escapeHtml(item.name || '')}" placeholder="browser"></label>
-                <label class="wide"><span>配置文件</span><input id="modal-mcp-path" type="text" value="${escapeHtml(defaultPath)}" placeholder=".mcp.json 路径"></label>
-                <label class="wide"><span>MCP JSON</span><textarea id="modal-mcp-json" rows="8" placeholder='{"command":"npx","args":["browser-mcp"]}'>${escapeHtml(JSON.stringify(definition, null, 2))}</textarea></label>
-            </div>
-        `, async () => {
-            const result = await apiPost('/api/mcp/save', {
-                name: readValue('modal-mcp-name'),
-                path: readValue('modal-mcp-path'),
-                json: readValue('modal-mcp-json'),
-                projectRoot: currentCatalogRoot(),
-            });
-            if (mcpCommand) mcpCommand.textContent = `saved ${result.name} -> ${result.path}`;
-            closeModal();
-            showToast('MCP 已保存');
-            loadLocalCatalog(true);
-        });
-    }
-
-    function openSkillInstaller() {
-        openModal('搜索并安装 Skill', `
-            <div class="form-grid modal-form">
-                <label class="wide"><span>关键词</span><input id="modal-skill-query" type="text" placeholder="例如 pdf, browser, notion"></label>
-                <label class="wide inline-action"><button class="btn-secondary" id="modal-skill-search-btn" type="button">搜索公开来源</button></label>
-                <label><span>Skill 名称</span><input id="modal-skill-name" type="text" placeholder="可留空自动推断"></label>
-                <label class="wide"><span>Git 仓库 URL</span><input id="modal-skill-repo" type="text" placeholder="https://github.com/org/repo.git"></label>
-                <div class="wide search-results" id="modal-skill-results"></div>
-            </div>
-        `, async () => {
-            const result = await apiPost('/api/skills/install', {
-                skillName: readValue('modal-skill-name'),
-                repoUrl: readValue('modal-skill-repo'),
-            });
-            if (skillCommand) skillCommand.textContent = result.command || result.path || '';
-            closeModal();
-            showToast(result.installed ? 'Skill 已安装' : 'Skill 安装失败');
-            loadLocalCatalog(true);
-        });
-
-        const searchButton = document.getElementById('modal-skill-search-btn');
-        const resultsBox = document.getElementById('modal-skill-results');
-        if (!searchButton || !resultsBox) return;
-        searchButton.addEventListener('click', async () => {
-            resultsBox.innerHTML = '<div class="resource-empty">搜索中...</div>';
-            try {
-                const data = await apiPost('/api/skills/search', {
-                    query: readValue('modal-skill-query'),
-                    source: 'all',
-                });
-                if (!data.results || data.results.length === 0) {
-                    resultsBox.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
-                    return;
-                }
-                resultsBox.innerHTML = '';
-                data.results.forEach(result => {
-                    const row = document.createElement('div');
-                    row.className = 'search-result-row';
-                    const repoUrl = result.repoUrl || result.sourceUrl || '';
-                    const action = result.installable
-                        ? `<button class="btn-mini" type="button" data-modal-skill-name="${escapeHtml(result.name)}" data-modal-skill-repo="${escapeHtml(repoUrl)}">使用</button>`
-                        : `<a class="btn-mini" href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener">打开</a>`;
-                    row.innerHTML = `
-                        <div>
-                            <strong>${escapeHtml(result.name)}</strong>
-                            <span>${escapeHtml(result.source || 'source')} · ${escapeHtml(result.description || 'no description')}</span>
-                            <code>${escapeHtml(repoUrl)}</code>
-                        </div>
-                        ${action}
-                    `;
-                    resultsBox.appendChild(row);
-                });
-            } catch (e) {
-                resultsBox.innerHTML = `<div class="resource-empty">搜索失败：${escapeHtml(e.message)}</div>`;
-            }
-        });
-    }
-
-    async function saveSessionMeta(session, patch) {
-        await apiPost('/api/sessions/meta', {
-            projectId: session.projectId || currentProject,
-            sessionId: session.id,
-            titleAlias: session.titleAlias || '',
-            hidden: false,
-            ...patch,
-        });
-        await loadSessions();
-    }
-
-    function openSessionEditor(item) {
-        const currentPrompt = promptSettings.sessionPrompts?.[item.id] || '';
-        openModal('编辑会话', `
-            <div class="form-grid modal-form">
-                <label class="wide"><span>会话名称</span><input id="modal-session-title" type="text" value="${escapeHtml(item.titleAlias || item.title || '')}"></label>
-                <label class="wide"><span>会话提示词</span><textarea id="modal-session-prompt" rows="8" placeholder="留空则使用全局提示词">${escapeHtml(currentPrompt)}</textarea></label>
-                <label class="wide"><span>原始会话 ID</span><input type="text" value="${escapeHtml(item.id || '')}" disabled></label>
-            </div>
-        `, async () => {
-            await saveSessionMeta(item, { titleAlias: readValue('modal-session-title') });
-            promptSettings = await apiPost('/api/prompts', {
-                scope: 'session',
-                sessionId: item.id,
-                prompt: readValue('modal-session-prompt'),
-            });
-            renderPromptSettings(item.id);
-            closeModal();
-            showToast('会话设置已保存');
-        });
-    }
-
+    // --- Context menu items ---
     function contextItemsFor(kind, item) {
         if (kind === 'session') {
             return [
-                { label: '编辑会话', action: () => openSessionEditor(item) },
-                { label: '复制恢复命令', action: () => copyText(item.resumeCommand || '') },
-                {
-                    label: '删除会话到本地备份',
-                    action: async () => {
-                        if (!confirm('会话文件会移到 data/deleted_sessions，本操作不会永久删除。是否继续？')) return;
-                        try {
-                            await apiPost('/api/sessions/delete', {
-                                projectId: item.projectId || currentProject,
-                                sessionId: item.id,
-                                titleAlias: item.titleAlias || item.title || '',
-                            });
-                            await loadSessions();
-                            showToast('会话已移入本地备份');
-                        } catch (e) {
-                            showToast(`删除会话失败：${e.message}`);
-                        }
-                    },
-                },
+                { label: '编辑', action: () => showEditSessionDialog(item) },
+                { label: '删除', action: () => showDeleteSessionDialog(item) },
             ];
         }
         if (kind === 'mcp') {
             return [
-                { label: '编辑 MCP', action: () => openMcpEditor(item) },
+                {
+                    label: item.disabled ? '启用 MCP' : '禁用 MCP',
+                    action: async () => {
+                        try {
+                            await apiPost('/api/mcp/enabled', {
+                                name: item.name,
+                                path: item.path,
+                                scope: item.scope,
+                                enabled: !!item.disabled,
+                                projectRoot: currentCatalogRoot(),
+                            });
+                            showToast(item.disabled ? 'MCP 已启用' : 'MCP 已禁用');
+                            loadLocalCatalog(true);
+                        } catch (e) {
+                            showToast(`MCP 状态修改失败：${e.message}`);
+                        }
+                    },
+                },
                 { label: '打开配置位置', action: () => openLocalPath(item.path || '') },
+                { label: '复制 MCP 名称', action: () => copyText(item.name || '') },
                 {
                     label: '删除 MCP',
                     action: async () => {
@@ -876,12 +449,31 @@
         }
         if (kind === 'skill') {
             return [
-                { label: '编辑 Skill 文件', action: () => openLocalPath(item.path || '') },
+                {
+                    label: item.disabled ? '启用 Skill' : '禁用 Skill',
+                    action: async () => {
+                        try {
+                            await apiPost('/api/skills/enabled', {
+                                name: item.name,
+                                path: item.path,
+                                scope: item.scope,
+                                sourceType: item.sourceType,
+                                enabled: !!item.disabled,
+                                projectRoot: currentCatalogRoot(),
+                            });
+                            showToast(item.disabled ? 'Skill 已启用' : 'Skill 已禁用');
+                            loadLocalCatalog(true);
+                        } catch (e) {
+                            showToast(`Skill 状态修改失败：${e.message}`);
+                        }
+                    },
+                },
+                { label: '打开 Skill 文件', action: () => openLocalPath(item.path || '') },
                 { label: '复制 Skill 路径', action: () => copyText(item.path || '') },
                 {
                     label: '删除 Skill',
                     action: async () => {
-                        if (!confirm(`删除 Skill 目录：${item.name}？`)) return;
+                        if (!confirm(`删除 Skill：${item.name}？`)) return;
                         try {
                             await apiPost('/api/skills/delete', {
                                 path: item.path,
@@ -898,24 +490,489 @@
         }
         if (kind === 'agent') {
             return [
-                { label: '选择 Agent', action: () => selectAgent(item) },
-                {
-                    label: '编辑 Agent',
-                    action: async () => {
-                        try {
-                            const agent = await api(`/api/agent-file?path=${encodeURIComponent(item.path || '')}`);
-                            fillAgentEditor(agent);
-                            document.querySelectorAll('.secondary-tools').forEach(section => section.classList.remove('is-collapsed'));
-                            document.getElementById('agent-creator')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        } catch (e) {
-                            showToast(`读取 Agent 失败：${e.message}`);
-                        }
-                    },
-                },
+                { label: '查看详情', action: () => showAgentDetailDialog(item) },
                 { label: '打开 Agent 文件', action: () => openLocalPath(item.path || '') },
             ];
         }
+        if (kind === 'mcp') {
+            // mcp already has entries, nothing extra needed
+        }
         return [];
+    }
+
+    // --- Agent detail dialog ---
+    async function showAgentDetailDialog(item) {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+            <div class="agent-detail-card action-modal-card">
+                <div class="agent-detail-header">
+                    <div>
+                        <div class="agent-detail-kicker">Agent · ${escapeHtml(item.scope || 'local')}</div>
+                        <h2>${escapeHtml(item.name || '')}</h2>
+                        <p>${escapeHtml(item.path || '')}</p>
+                    </div>
+                    <button class="btn-icon" data-modal-close title="关闭">×</button>
+                </div>
+                <div class="agent-detail-body">
+                    <section class="agent-detail-section">
+                        <div class="agent-detail-section-title">
+                            <span>设置</span>
+                            <button class="btn-secondary" id="agent-detail-save">保存 Agent</button>
+                        </div>
+                        <div class="agent-settings-grid">
+                            <label><span>名称</span><input id="agent-detail-name" type="text" value="${escapeHtml(item.name || '')}"></label>
+                            <label><span>模型</span><input id="agent-detail-model" type="text" value="${escapeHtml(item.model || '')}" placeholder="sonnet / opus / free/glm-5.1"></label>
+                            <label class="wide"><span>描述</span><input id="agent-detail-description" type="text" value="${escapeHtml(item.description || '')}"></label>
+                            <label class="wide"><span>工具</span><input id="agent-detail-tools" type="text" value="${escapeHtml(item.tools || '')}" placeholder="Read, Write, Bash"></label>
+                            <label class="wide"><span>提示词</span><textarea id="agent-detail-prompt" rows="10">加载中...</textarea></label>
+                        </div>
+                    </section>
+                    <section class="agent-detail-section">
+                        <div class="agent-detail-section-title">
+                            <span>定时任务</span>
+                            <button class="btn-secondary" id="agent-task-add">新增本地 Cron 任务</button>
+                        </div>
+                        <div id="agent-detail-tasks-content" class="agent-task-stack"><span class="resource-empty">加载中...</span></div>
+                    </section>
+                    <section class="agent-detail-section">
+                        <div class="agent-detail-section-title"><span>计划与连接</span></div>
+                        <div id="agent-detail-plan-content" class="agent-plan-grid"><span class="resource-empty">加载中...</span></div>
+                    </section>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        const closeDialog = () => backdrop.remove();
+        backdrop.querySelector('[data-modal-close]').addEventListener('click', closeDialog);
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeDialog(); });
+
+        const promptInput = backdrop.querySelector('#agent-detail-prompt');
+        const tasksEl = backdrop.querySelector('#agent-detail-tasks-content');
+        const planEl = backdrop.querySelector('#agent-detail-plan-content');
+
+        let agentFile = { ...item, prompt: '' };
+        let workspace = { tasks: [], externalTasks: [], connections: [], runs: [], dailyPlan: {} };
+
+        async function refreshWorkspace() {
+            try {
+                workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(item.name)}&projectRoot=${encodeURIComponent(currentCatalogRoot())}`);
+                renderAgentTaskEditor(workspace);
+                renderAgentPlanSummary(workspace);
+            } catch (e) {
+                tasksEl.innerHTML = `<div class="resource-empty">读取任务失败：${escapeHtml(e.message)}</div>`;
+                planEl.innerHTML = `<div class="resource-empty">读取计划失败：${escapeHtml(e.message)}</div>`;
+            }
+        }
+
+        try {
+            agentFile = await api(`/api/agent-file?path=${encodeURIComponent(item.path)}`);
+            setValue('agent-detail-name', agentFile.name || item.name || '');
+            setValue('agent-detail-description', agentFile.description || '');
+            setValue('agent-detail-model', agentFile.model || '');
+            setValue('agent-detail-tools', agentFile.tools || '');
+            promptInput.value = agentFile.prompt || '';
+        } catch (e) {
+            promptInput.value = `读取失败：${e.message}`;
+        }
+
+        backdrop.querySelector('#agent-detail-save').addEventListener('click', async () => {
+            try {
+                const record = await apiPost('/api/agents/update', {
+                    path: item.path,
+                    name: readValue('agent-detail-name'),
+                    description: readValue('agent-detail-description'),
+                    model: readValue('agent-detail-model'),
+                    tools: readValue('agent-detail-tools'),
+                    prompt: readValue('agent-detail-prompt'),
+                    projectRoot: currentCatalogRoot(),
+                });
+                item.name = record.name;
+                showToast('Agent 已保存');
+                loadLocalCatalog(true);
+            } catch (e) {
+                showToast(`Agent 保存失败：${e.message}`);
+            }
+        });
+
+        backdrop.querySelector('#agent-task-add').addEventListener('click', () => {
+            const draft = {
+                id: '',
+                agentName: readValue('agent-detail-name') || item.name,
+                agentPath: item.path,
+                projectRoot: currentCatalogRoot(),
+                name: 'Daily check',
+                cron: '30 7 * * *',
+                enabled: true,
+                sessionPolicy: 'new',
+                prompt: 'Run the configured daily task.',
+            };
+            workspace.tasks = [draft, ...(workspace.tasks || [])];
+            renderAgentTaskEditor(workspace);
+        });
+
+        function renderAgentTaskEditor(data) {
+            const localTasks = data.tasks || [];
+            const externalTasks = data.externalTasks || [];
+            let html = '';
+            if (localTasks.length) {
+                html += `<div class="agent-task-group-title">本地 Cron 任务</div>`;
+                html += localTasks.map(task => `
+                    <div class="agent-task-card" data-local-task="${escapeHtml(encodeData(task))}">
+                        <div class="agent-task-card-head">
+                            <input class="agent-task-name" value="${escapeHtml(task.name || '')}" placeholder="任务名称">
+                            <select class="agent-task-enabled">
+                                <option value="true" ${task.enabled !== false ? 'selected' : ''}>启用</option>
+                                <option value="false" ${task.enabled === false ? 'selected' : ''}>停用</option>
+                            </select>
+                        </div>
+                        <div class="agent-task-grid">
+                            <label><span>Cron</span><input class="agent-task-cron" value="${escapeHtml(task.cron || '30 7 * * *')}"></label>
+                            <label><span>会话策略</span><select class="agent-task-policy"><option value="new" ${task.sessionPolicy !== 'resume' ? 'selected' : ''}>新会话</option><option value="resume" ${task.sessionPolicy === 'resume' ? 'selected' : ''}>恢复会话</option></select></label>
+                            <label class="wide"><span>恢复会话 ID</span><input class="agent-task-resume" value="${escapeHtml(task.resumeSessionId || '')}"></label>
+                            <label class="wide"><span>任务目标</span><textarea class="agent-task-prompt" rows="3">${escapeHtml(task.prompt || '')}</textarea></label>
+                        </div>
+                        <div class="button-row">
+                            <button class="btn-secondary" data-agent-task-save>保存任务</button>
+                            ${task.id ? '<button class="btn-secondary" data-agent-task-delete>删除任务</button>' : ''}
+                        </div>
+                    </div>
+                `).join('');
+            }
+            if (externalTasks.length) {
+                html += `<div class="agent-task-group-title">Windows 计划任务</div>`;
+                html += externalTasks.map(task => `
+                    <div class="agent-task-card external">
+                        <div class="agent-task-card-head">
+                            <strong>${escapeHtml(task.taskName || '')}</strong>
+                            <span>${escapeHtml(task.state || '')}</span>
+                        </div>
+                        <div class="agent-task-meta">${escapeHtml(task.schedule || '')}</div>
+                        <code>${escapeHtml([task.command, task.arguments].filter(Boolean).join(' '))}</code>
+                        <div class="button-row">
+                            <button class="btn-secondary" data-external-task="${escapeHtml(task.taskName || '')}" data-external-action="run">运行</button>
+                            <button class="btn-secondary" data-external-task="${escapeHtml(task.taskName || '')}" data-external-action="enable">启用</button>
+                            <button class="btn-secondary" data-external-task="${escapeHtml(task.taskName || '')}" data-external-action="disable">停用</button>
+                            <button class="btn-secondary" data-external-task="${escapeHtml(task.taskName || '')}" data-external-action="stop">停止</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            tasksEl.innerHTML = html || `<div class="resource-empty">未找到相关定时任务。可点击“新增本地 Cron 任务”创建。</div>`;
+        }
+
+        function renderAgentPlanSummary(data) {
+            const plan = data.dailyPlan || {};
+            const connections = data.connections || [];
+            const runs = data.runs || [];
+            planEl.innerHTML = `
+                <div class="agent-plan-card"><strong>计划目录</strong><code>${escapeHtml(plan.path || '')}</code><span>${plan.exists ? '已发现' : '未发现'}</span></div>
+                <div class="agent-plan-card"><strong>最新计划</strong><code>${escapeHtml(plan.latestJsonPath || plan.latestMarkdownPath || '无')}</code><span>${escapeHtml(plan.latestJson?.date || '')}</span></div>
+                <div class="agent-plan-card"><strong>连接</strong><span>${connections.length} 个</span><code>${escapeHtml(connections.map(c => c.name || c.type).join(', ') || '无')}</code></div>
+                <div class="agent-plan-card"><strong>运行记录</strong><span>${runs.length} 条</span><code>${escapeHtml((runs[0]?.updatedAt || runs[0]?.createdAt || ''))}</code></div>
+            `;
+        }
+
+        tasksEl.addEventListener('click', async (e) => {
+            const saveBtn = e.target.closest('[data-agent-task-save]');
+            const deleteBtn = e.target.closest('[data-agent-task-delete]');
+            const externalBtn = e.target.closest('[data-external-task]');
+            try {
+                if (saveBtn || deleteBtn) {
+                    const card = e.target.closest('[data-local-task]');
+                    const original = decodeData(card.dataset.localTask);
+                    if (deleteBtn) {
+                        if (!confirm('删除这个本地 Agent 定时任务？')) return;
+                        await apiPost('/api/agent-tasks/delete', { id: original.id, agentName: item.name, projectRoot: currentCatalogRoot() });
+                        showToast('任务已删除');
+                        await refreshWorkspace();
+                        return;
+                    }
+                    const payload = {
+                        id: original.id || '',
+                        agentName: readValue('agent-detail-name') || item.name,
+                        agentPath: item.path,
+                        projectRoot: currentCatalogRoot(),
+                        name: card.querySelector('.agent-task-name').value.trim(),
+                        cron: card.querySelector('.agent-task-cron').value.trim(),
+                        enabled: card.querySelector('.agent-task-enabled').value === 'true',
+                        sessionPolicy: card.querySelector('.agent-task-policy').value,
+                        resumeSessionId: card.querySelector('.agent-task-resume').value.trim(),
+                        prompt: card.querySelector('.agent-task-prompt').value.trim(),
+                    };
+                    await apiPost('/api/agent-tasks', payload);
+                    showToast('任务已保存');
+                    await refreshWorkspace();
+                } else if (externalBtn) {
+                    await apiPost('/api/external-agent-tasks/control', {
+                        taskName: externalBtn.dataset.externalTask,
+                        action: externalBtn.dataset.externalAction,
+                    });
+                    showToast('计划任务操作已执行');
+                    await refreshWorkspace();
+                }
+            } catch (err) {
+                showToast(`任务操作失败：${err.message}`);
+            }
+        });
+
+        await refreshWorkspace();
+    }
+
+    // Delegated click on agent resource rows to open detail
+    document.addEventListener('click', (e) => {
+        const row = e.target.closest('.resource-row[data-menu-kind="agent"]');
+        if (!row) return;
+        // Ignore if it was a button inside the row
+        if (e.target.closest('button')) return;
+        const item = decodeData(row.dataset.menuItem);
+        if (item && item.name) showAgentDetailDialog(item);
+    });
+
+    // --- Session edit dialog ---
+    function showEditSessionDialog(item) {
+        const currentTitle = item.titleAlias || item.originalTitle || item.title || '';
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+            <div class="action-modal-card" style="width:min(420px,100%);">
+                <div class="modal-header">
+                    <h3>编辑会话名称</h3>
+                </div>
+                <div class="modal-form">
+                    <label style="display:flex;flex-direction:column;gap:8px;">
+                        <span style="font-size:12px;font-weight:500;color:var(--colors-muted);">会话名称</span>
+                        <input type="text" id="edit-session-name" value="${escapeHtml(currentTitle)}" style="width:100%;min-height:40px;border:1px solid var(--colors-surface-cream-strong);border-radius:var(--r-md);background:var(--colors-canvas);color:var(--colors-ink);font-family:var(--font-body);font-size:14px;padding:9px 12px;" />
+                    </label>
+                </div>
+                <div class="modal-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                    <button class="btn-secondary" data-modal-cancel>取消</button>
+                    <button class="btn-primary" data-modal-confirm>保存</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        const input = backdrop.querySelector('#edit-session-name');
+        input.focus();
+        input.select();
+
+        backdrop.querySelector('[data-modal-cancel]').addEventListener('click', () => backdrop.remove());
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+        backdrop.querySelector('[data-modal-confirm]').addEventListener('click', async () => {
+            const newTitle = input.value.trim();
+            try {
+                await fetch('/api/sessions/meta', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projectId: item.projectId,
+                        sessionId: item.id,
+                        titleAlias: newTitle,
+                    }),
+                });
+                showToast('会话名称已更新');
+                backdrop.remove();
+                loadSessions();
+            } catch (e) {
+                showToast(`更新失败：${e.message}`);
+            }
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') backdrop.querySelector('[data-modal-confirm]').click();
+            if (e.key === 'Escape') backdrop.remove();
+        });
+    }
+
+    // --- Session delete dialog ---
+    function showDeleteSessionDialog(item) {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+            <div class="action-modal-card" style="width:min(460px,100%);">
+                <div class="modal-header">
+                    <h3>删除会话</h3>
+                </div>
+                <div class="modal-form">
+                    <p style="font-size:14px;color:var(--colors-body);margin-bottom:16px;">确定要删除会话「${escapeHtml(item.title)}」吗？</p>
+                    <div style="display:flex;flex-direction:column;gap:12px;">
+                        <button class="btn-secondary" data-delete="soft" style="width:100%;display:flex;flex-direction:column;align-items:flex-start;padding:14px 16px;border:1px solid var(--colors-surface-cream-strong);border-radius:var(--r-lg);background:var(--colors-canvas);cursor:pointer;text-align:left;transition:all 0.15s ease;">
+                            <strong style="font-size:14px;color:var(--colors-ink);">在界面中删除</strong>
+                            <span style="font-size:12px;color:var(--colors-muted);margin-top:4px;">标记为已删除，不再显示，会话文件仍保留在磁盘</span>
+                        </button>
+                        <button class="btn-secondary" data-delete="local" style="width:100%;display:flex;flex-direction:column;align-items:flex-start;padding:14px 16px;border:1px solid rgba(198,69,69,0.3);border-radius:var(--r-lg);background:#fef8f8;cursor:pointer;text-align:left;transition:all 0.15s ease;">
+                            <strong style="font-size:14px;color:var(--colors-error);">本地删除（移至回收站）</strong>
+                            <span style="font-size:12px;color:var(--colors-muted);margin-top:4px;">将文件移至系统回收站，可从回收站恢复</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="modal-actions" style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">
+                    <button class="btn-secondary" data-modal-cancel>取消</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        backdrop.querySelector('[data-modal-cancel]').addEventListener('click', () => backdrop.remove());
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+
+        // Soft delete (hide from UI)
+        backdrop.querySelector('[data-delete="soft"]').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/api/sessions/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projectId: item.projectId,
+                        sessionId: item.id,
+                    }),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                showToast('会话已从界面中删除');
+                backdrop.remove();
+                // If viewing the deleted session, go home
+                if (currentSessionId === item.id) showHome();
+                loadSessions();
+            } catch (e) {
+                showToast(`删除失败：${e.message}`);
+            }
+        });
+
+        // Local delete (recycle bin)
+        backdrop.querySelector('[data-delete="local"]').addEventListener('click', async () => {
+            try {
+                const resp = await fetch('/api/sessions/delete-local', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        projectId: item.projectId,
+                        sessionId: item.id,
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.error || `HTTP ${resp.status}`);
+                }
+                showToast('会话文件已移至回收站');
+                backdrop.remove();
+                if (currentSessionId === item.id) showHome();
+                loadSessions();
+            } catch (e) {
+                showToast(`删除失败：${e.message}`);
+            }
+        });
+    }
+
+    // --- Recycle bin dialog ---
+    async function showRecycleBinDialog() {
+        const backdrop = document.createElement('div');
+        backdrop.className = 'modal-backdrop';
+        backdrop.innerHTML = `
+            <div class="action-modal-card recycle-bin-card" style="width:min(640px,100%);">
+                <div class="modal-header" style="border-bottom:1px solid var(--colors-surface-cream-strong);padding-bottom:var(--sp-md);">
+                    <div style="display:flex;align-items:center;gap:var(--sp-sm);">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--colors-primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                        <h3 style="font-family:var(--font-display);font-size:22px;font-weight:400;color:var(--colors-ink);letter-spacing:0;margin:0;">会话回收站</h3>
+                    </div>
+                    <button class="btn-icon" data-modal-close title="关闭" style="width:32px;height:32px;border-color:var(--colors-surface-cream-strong);">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div class="recycle-bin-body" style="max-height:min(480px,60vh);overflow-y:auto;padding:var(--sp-md) 0;">
+                    <div class="loading" style="padding:var(--sp-xxl);">加载中</div>
+                </div>
+                <div style="padding:var(--sp-md) 0 0;border-top:1px solid var(--colors-surface-cream-strong);display:flex;justify-content:flex-end;">
+                    <span class="recycle-bin-count" style="font-size:12px;color:var(--colors-muted);"></span>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(backdrop);
+
+        const closeDialog = () => backdrop.remove();
+        backdrop.querySelector('[data-modal-close]').addEventListener('click', closeDialog);
+        backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeDialog(); });
+
+        // Load deleted sessions
+        const body = backdrop.querySelector('.recycle-bin-body');
+        const countEl = backdrop.querySelector('.recycle-bin-count');
+        try {
+            const deleted = await api('/api/sessions/deleted');
+            if (!deleted || deleted.length === 0) {
+                body.innerHTML = `<div class="resource-empty" style="text-align:center;padding:var(--sp-xxl);color:var(--colors-muted-soft);font-size:14px;">回收站为空，没有已删除的会话</div>`;
+                countEl.textContent = '0 项';
+                return;
+            }
+            countEl.textContent = `${deleted.length} 项`;
+            body.innerHTML = '';
+            deleted.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'recycle-bin-row';
+                const title = item.titleAlias || `Session ${item.sessionId.slice(0, 8)}...`;
+                const proj = item.projectPath || item.projectId;
+                const delTime = item.updatedAt ? formatTimestamp(item.updatedAt) : '未知';
+                const delMethod = item.deleteMethod === 'local' ? '本地删除' : '界面删除';
+                const hasBackup = !!item.backupFile;
+                row.innerHTML = `
+                    <div class="recycle-bin-info">
+                        <div class="recycle-bin-title">${escapeHtml(title)}</div>
+                        <div class="recycle-bin-meta">
+                            <span>${escapeHtml(proj)}</span>
+                            <span class="recycle-bin-badge ${item.deleteMethod}">${delMethod}</span>
+                            <span>${delTime}</span>
+                        </div>
+                    </div>
+                    <div class="recycle-bin-actions">
+                        ${item.deleteMethod === 'soft' ? `<button class="btn-mini recycle-restore-btn" data-sid="${escapeHtml(item.sessionId)}" data-pid="${escapeHtml(item.projectId)}">恢复</button>` : ''}
+                        ${hasBackup ? `<button class="btn-mini recycle-trash-btn" data-sid="${escapeHtml(item.sessionId)}" data-pid="${escapeHtml(item.projectId)}" style="color:var(--colors-error);border-color:rgba(198,69,69,0.3);">移至回收站</button>` : ''}
+                    </div>
+                `;
+                body.appendChild(row);
+            });
+
+            // Restore buttons
+            backdrop.querySelectorAll('.recycle-restore-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    try {
+                        const resp = await fetch('/api/sessions/restore', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ projectId: btn.dataset.pid, sessionId: btn.dataset.sid }),
+                        });
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        showToast('会话已恢复');
+                        closeDialog();
+                        loadSessions();
+                    } catch (e) {
+                        showToast(`恢复失败：${e.message}`);
+                    }
+                });
+            });
+
+            // Trash backup buttons
+            backdrop.querySelectorAll('.recycle-trash-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    try {
+                        const resp = await fetch('/api/sessions/trash-backup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ projectId: btn.dataset.pid, sessionId: btn.dataset.sid }),
+                        });
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        showToast('备份已移至回收站');
+                        closeDialog();
+                        loadSessions();
+                    } catch (e) {
+                        showToast(`操作失败：${e.message}`);
+                    }
+                });
+            });
+        } catch (e) {
+            body.innerHTML = `<div class="resource-empty" style="text-align:center;padding:var(--sp-xxl);color:var(--colors-error);">加载失败：${escapeHtml(e.message)}</div>`;
+        }
     }
 
     async function copyText(text) {
@@ -969,6 +1026,15 @@
                     rootOpt.textContent = `${p.name} (${p.sessionCount})`;
                     catalogProjectRootSelect.appendChild(rootOpt);
                 }
+                if (catalogProjectRootPills) {
+                    const pill = document.createElement('button');
+                    pill.type = 'button';
+                    pill.className = 'catalog-project-pill';
+                    pill.dataset.projectRoot = p.path || p.name || '';
+                    pill.title = p.path || p.name || '';
+                    pill.innerHTML = `<span>${escapeHtml(p.name)}</span><small>${p.sessionCount} 会话</small>`;
+                    catalogProjectRootPills.appendChild(pill);
+                }
             });
 
             // Auto-select first project
@@ -979,6 +1045,9 @@
                 catalogProjectRoot.value = currentProjectPath;
             }
             if (catalogProjectRootSelect) catalogProjectRootSelect.value = currentProjectPath;
+            document.querySelectorAll('.catalog-project-pill').forEach(pill => {
+                pill.classList.toggle('active', normalizePath(pill.dataset.projectRoot) === normalizePath(currentProjectPath));
+            });
             loadLocalCatalog(true);
             loadSessions();
         } catch (e) {
@@ -1056,7 +1125,7 @@
     // --- Select session ---
     async function selectSession(id) {
         currentSessionId = id;
-        clearSelectedAgent();
+        if (history.replaceState) history.replaceState(null, '', location.pathname + '#session-' + id);
 
         // Update active state
         document.querySelectorAll('.session-card').forEach(el => {
@@ -1071,8 +1140,10 @@
         try {
             const data = await api(`/api/session/${id}?project=${encodeURIComponent(currentProject)}`);
 
-            // Update header
-            conversationTitle.textContent = data.aiTitle || `会话 ${id.slice(0, 8)}`;
+            // Update header — use aliased title if available
+            const sessionMeta = sessionsData.find(s => s.id === id);
+            const displayTitle = sessionMeta?.titleAlias || data.aiTitle || `会话 ${id.slice(0, 8)}`;
+            conversationTitle.textContent = displayTitle;
             metaMessages.textContent = `${data.messageCount} 条消息`;
             metaTime.textContent = data.messages.length > 0
                 ? formatTimestamp(data.messages[data.messages.length - 1].timestamp)
@@ -1081,14 +1152,7 @@
             metaCache.className = 'meta-badge ' + (data.cacheHit ? 'cache-hit' : 'cache-miss');
 
             // Update resume command
-            const sessionMeta = sessionsData.find(s => s.id === id);
             resumeCmd.textContent = sessionMeta?.resumeCommand || withPowerShellLocation(currentProjectPath, `claude -r ${id}`);
-            if (promptSessionId) promptSessionId.value = id;
-            if (promptScope) promptScope.value = 'session';
-            if (agentPrompt?.dataset.autoPrompt === 'true' || !agentPrompt?.value.trim()) {
-                agentPrompt.dataset.autoPrompt = 'true';
-            }
-            applyEffectivePrompt(id);
 
             // Render messages
             renderMessages(data.messages);
@@ -1158,7 +1222,6 @@
                 copyResumeBtn.querySelector('span').textContent = '复制';
             }, 2000);
         } catch {
-            // Fallback
             const range = document.createRange();
             range.selectNode(resumeCmd);
             window.getSelection().removeAllRanges();
@@ -1187,12 +1250,22 @@
         }
     });
 
-    [agentPermission, agentCwd, agentPrompt].forEach(el => {
+    [agentModel, agentEffort, agentPermission, agentCwd, agentPrompt, agentExtraFlags].forEach(el => {
         if (el) {
             el.addEventListener('input', buildAgentCommand);
-            el.addEventListener('change', buildAgentCommand);
+            el.addEventListener('change', () => {
+                // Toggle custom model input visibility
+                if (el === agentModel && agentCustomModelWrap) {
+                    agentCustomModelWrap.style.display = agentModel.value === 'custom' ? '' : 'none';
+                }
+                buildAgentCommand();
+            });
         }
     });
+
+    if (agentCustomModel) {
+        agentCustomModel.addEventListener('input', buildAgentCommand);
+    }
 
     if (agentPrompt) {
         agentPrompt.addEventListener('input', () => {
@@ -1200,227 +1273,137 @@
         });
     }
 
-    if (promptSettingText) {
-        promptSettingText.addEventListener('input', () => {
-            promptSettingText.dataset.dirty = 'true';
-        });
-    }
-
-    if (focusSearchBtn) {
-        focusSearchBtn.addEventListener('click', () => {
-            searchInput.focus();
-        });
-    }
-
     if (refreshLocalBtn) {
         refreshLocalBtn.addEventListener('click', () => loadLocalCatalog(true));
     }
 
-    if (mcpImportBtn) {
-        mcpImportBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/mcp/import-json', {
-                    name: readValue('mcp-name'),
-                    json: readValue('mcp-json'),
-                });
-                mcpCommand.textContent = result.command;
-                showToast('MCP 导入命令已保存');
-                loadLocalCatalog();
-            } catch (e) {
-                showToast(`MCP JSON 错误：${e.message}`);
-            }
-        });
+    if (backHomeBtn) {
+        backHomeBtn.addEventListener('click', showHome);
     }
 
-    if (skillInstallBtn) {
-        skillInstallBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/skills/install-command', {
-                    skillName: readValue('skill-name'),
-                    repoUrl: readValue('skill-repo'),
-                });
-                skillCommand.textContent = result.command;
-                showToast('Skill 安装命令已保存');
-                loadLocalCatalog();
-            } catch (e) {
-                showToast(`Skill 参数错误：${e.message}`);
-            }
-        });
+    const recycleBinBtn = document.getElementById('recycle-bin-btn');
+    if (recycleBinBtn) {
+        recycleBinBtn.addEventListener('click', showRecycleBinDialog);
     }
 
-    if (skillCloneBtn) {
-        skillCloneBtn.addEventListener('click', async () => {
-            const repoUrl = readValue('skill-repo');
-            if (!repoUrl) {
-                showToast('请先选择或输入 Git 仓库 URL');
-                return;
-            }
-            if (!confirm(`将 git clone 到本机 Claude skills 目录：\n${repoUrl}`)) return;
-            try {
-                const result = await apiPost('/api/skills/install', {
-                    skillName: readValue('skill-name'),
-                    repoUrl,
-                });
-                skillCommand.textContent = result.command || '';
-                if (skillActionResult) {
-                    skillActionResult.textContent = result.installed
-                        ? `已安装：${result.path}`
-                        : `安装失败：${result.stderr || result.stdout || 'git clone failed'}`;
-                }
-                showToast(result.installed ? 'Skill 已安装' : 'Skill 安装失败');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`Skill 安装失败：${e.message}`);
-            }
-        });
-    }
+    document.addEventListener('contextmenu', (e) => {
+        const sessionCard = e.target.closest('.session-card');
+        const resourceRow = e.target.closest('.resource-row');
+        const target = sessionCard || resourceRow;
+        if (!target) return;
 
-    if (activateSkillBundleBtn) {
-        activateSkillBundleBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/skills/activate-bundle', {
-                    bundlePath: readValue('skill-bundle-path'),
-                });
-                if (skillActionResult) {
-                    skillActionResult.textContent = `Bundle 已处理：激活 ${result.activated} 个，跳过 ${result.skipped} 个。`;
-                }
-                skillCommand.textContent = `activated=${result.activated} skipped=${result.skipped}`;
-                showToast('本地 Bundle 已激活');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`Bundle 激活失败：${e.message}`);
-            }
-        });
-    }
+        let kind, item;
+        if (sessionCard) {
+            kind = target.dataset.menuKind;
+            item = decodeData(target.dataset.menuItem);
+        } else if (resourceRow) {
+            kind = target.dataset.menuKind || '';
+            item = decodeData(target.dataset.menuItem);
+        }
 
-    if (organizeSkillBundleBtn) {
-        organizeSkillBundleBtn.addEventListener('click', async () => {
-            const bundlePath = readValue('skill-bundle-path');
-            if (!bundlePath) {
-                showToast('请先输入 Bundle 路径');
-                return;
-            }
-            if (!confirm(`将把 Bundle 移出 skills 根目录并保存在 skill-bundles：\n${bundlePath}`)) return;
-            try {
-                const result = await apiPost('/api/skills/organize-bundle', { bundlePath });
-                const bundlePathInput = document.getElementById('skill-bundle-path');
-                if (bundlePathInput) bundlePathInput.value = result.target || bundlePath;
-                if (skillActionResult) {
-                    skillActionResult.textContent = `Bundle 已整理：${result.target}`;
-                }
-                skillCommand.textContent = result.target || '';
-                showToast('Bundle 目录已整理');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`Bundle 整理失败：${e.message}`);
-            }
-        });
-    }
-
-    if (skillSearchBtn) {
-        skillSearchBtn.addEventListener('click', async () => {
-            if (!skillSearchResults) return;
-            skillSearchResults.innerHTML = '<div class="resource-empty">搜索中...</div>';
-            try {
-                const data = await apiPost('/api/skills/search', {
-                    query: readValue('skill-search-query'),
-                    source: 'all',
-                });
-                if (!data.results || data.results.length === 0) {
-                    skillSearchResults.innerHTML = '<div class="resource-empty">未找到匹配仓库</div>';
-                    return;
-                }
-                skillSearchResults.innerHTML = '';
-                data.results.forEach(result => {
-                    const row = document.createElement('div');
-                    row.className = 'search-result-row';
-                    const sourceUrl = result.sourceUrl || result.repoUrl || '';
-                    const action = result.installable
-                        ? `<button class="btn-mini" data-use-skill-name="${escapeHtml(result.name)}" data-use-skill-repo="${escapeHtml(result.repoUrl)}">使用</button>`
-                        : `<a class="btn-mini" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">打开</a>`;
-                    row.innerHTML = `
-                        <div>
-                            <strong>${escapeHtml(result.name)}</strong>
-                            <span>${escapeHtml(result.source || 'source')} · ${escapeHtml(result.description || 'no description')} · ${escapeHtml(result.stars || 0)} stars</span>
-                            <code>${escapeHtml(result.repoUrl || sourceUrl || '')}</code>
-                        </div>
-                        ${action}
-                    `;
-                    skillSearchResults.appendChild(row);
-                });
-            } catch (e) {
-                skillSearchResults.innerHTML = `<div class="resource-empty">搜索失败：${escapeHtml(e.message)}</div>`;
-            }
-        });
-    }
-
-    document.addEventListener('click', (e) => {
-        const useSkill = e.target.closest('[data-use-skill-repo]');
-        if (!useSkill) return;
-        const skillNameInput = document.getElementById('skill-name');
-        const skillRepoInput = document.getElementById('skill-repo');
-        if (skillNameInput) skillNameInput.value = useSkill.dataset.useSkillName || '';
-        if (skillRepoInput) skillRepoInput.value = useSkill.dataset.useSkillRepo || '';
-        showToast('已填入 Skill 安装表单');
+        const items = contextItemsFor(kind, item);
+        if (items.length === 0) return;
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY, items);
     });
 
     document.addEventListener('click', (e) => {
-        const agentButton = e.target.closest('[data-select-agent]');
-        if (!agentButton) return;
-        selectAgent({
-            name: agentButton.dataset.selectAgent || '',
-            path: agentButton.dataset.agentPath || '',
-            scope: agentButton.dataset.agentScope || '',
-            description: agentButton.dataset.agentDescription || '',
-        });
+        if (!e.target.closest('.context-menu')) hideContextMenu();
     });
 
-    document.addEventListener('click', async (e) => {
-        const editButton = e.target.closest('[data-edit-agent-path]');
-        if (!editButton) return;
-        const path = editButton.dataset.editAgentPath || '';
-        if (!path) return;
-        try {
-            const agent = await api(`/api/agent-file?path=${encodeURIComponent(path)}`);
-            fillAgentEditor(agent);
-            document.querySelectorAll('.secondary-tools').forEach(section => section.classList.remove('is-collapsed'));
-            if (toggleLocalToolsBtn) toggleLocalToolsBtn.textContent = '隐藏本地工具';
-            document.getElementById('automation-agent-patterns')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        } catch (err) {
-            showToast(`读取 Agent 文件失败：${err.message}`);
+    // Hide context menu on any scroll (capture phase catches all scrollable children)
+    document.addEventListener('scroll', () => hideContextMenu(), true);
+    window.addEventListener('wheel', () => hideContextMenu(), { passive: true });
+    window.addEventListener('resize', () => hideContextMenu());
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hideContextMenu();
+    });
+
+    // --- Event listeners ---
+    projectSelect.addEventListener('change', () => {
+        currentProject = projectSelect.value;
+        currentProjectPath = projectSelect.selectedOptions[0]?.dataset.path || '';
+        if (catalogProjectRoot) {
+            catalogProjectRoot.value = currentProjectPath;
+        }
+        if (catalogProjectRootSelect) {
+            catalogProjectRootSelect.value = currentProjectPath;
+        }
+        document.querySelectorAll('.catalog-project-pill').forEach(pill => {
+            pill.classList.toggle('active', normalizePath(pill.dataset.projectRoot) === normalizePath(currentProjectPath));
+        });
+        currentSessionId = '';
+        conversationView.style.display = 'none';
+        welcomeState.style.display = 'flex';
+        loadLocalCatalog(true);
+        loadSessions();
+    });
+
+    if (catalogProjectRoot) {
+        catalogProjectRoot.addEventListener('change', () => {
+            if (catalogProjectRootSelect) catalogProjectRootSelect.value = catalogProjectRoot.value;
+            loadLocalCatalog(true);
+        });
+    }
+
+    if (catalogProjectRootSelect) {
+        catalogProjectRootSelect.addEventListener('change', () => {
+            if (catalogProjectRoot) catalogProjectRoot.value = catalogProjectRootSelect.value;
+            document.querySelectorAll('.catalog-project-pill').forEach(pill => {
+                pill.classList.toggle('active', normalizePath(pill.dataset.projectRoot) === normalizePath(catalogProjectRootSelect.value));
+            });
+            loadLocalCatalog(true);
+        });
+    }
+
+    if (catalogProjectRootPills) {
+        catalogProjectRootPills.addEventListener('click', (e) => {
+            const pill = e.target.closest('.catalog-project-pill');
+            if (!pill) return;
+            const root = pill.dataset.projectRoot || '';
+            if (catalogProjectRoot) catalogProjectRoot.value = root;
+            if (catalogProjectRootSelect) catalogProjectRootSelect.value = root;
+            document.querySelectorAll('.catalog-project-pill').forEach(item => item.classList.toggle('active', item === pill));
+            loadLocalCatalog(true);
+        });
+    }
+
+    if (catalogKindTabs) {
+        catalogKindTabs.addEventListener('click', (e) => {
+            const button = e.target.closest('[data-catalog-kind]');
+            if (!button) return;
+            setActiveCatalogKind(button.dataset.catalogKind || 'agents');
+        });
+    }
+
+    refreshBtn.addEventListener('click', () => {
+        loadSessions();
+        // If viewing a session, reload it; otherwise stay on home
+        if (currentSessionId) {
+            selectSession(currentSessionId);
         }
     });
 
-    document.addEventListener('click', (e) => {
-        const taskButton = e.target.closest('[data-edit-agent-task]');
-        if (!taskButton) return;
-        fillAgentTaskForm(decodeData(taskButton.dataset.editAgentTask));
-        showToast('已填入 Agent 任务表单');
-    });
-
-    document.addEventListener('click', (e) => {
-        const connectionButton = e.target.closest('[data-edit-agent-connection]');
-        if (!connectionButton) return;
-        fillAgentConnectionForm(decodeData(connectionButton.dataset.editAgentConnection));
-        showToast('已填入连接表单；Secret/Token 不会回显');
-    });
-
-    document.addEventListener('click', async (e) => {
-        const taskButton = e.target.closest('[data-external-task-action]');
-        if (!taskButton) return;
-        const taskName = taskButton.dataset.externalTaskName || '';
-        const action = taskButton.dataset.externalTaskAction || '';
-        if (!taskName || !action) return;
-        if (!confirm(`将对 Windows 计划任务执行 ${action}：\n${taskName}`)) return;
-        try {
-            const result = await apiPost('/api/external-agent-tasks/control', { taskName, action });
-            showToast(result.ok ? `任务已执行：${action}` : `任务执行失败：${result.stderr || result.stdout || result.returnCode}`);
-            if (selectedAgent) {
-                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(selectedAgent.name)}&projectRoot=${encodeURIComponent(selectedAgent.projectRoot)}`);
-                renderAgentWorkspace(workspace);
+    // --- Handle hash-based initial session navigation ---
+    function navigateFromHash() {
+        const hash = location.hash;
+        if (hash && hash.startsWith('#session-')) {
+            const sessionId = hash.replace('#session-', '');
+            if (sessionId && currentProject) {
+                selectSession(sessionId);
             }
-        } catch (err) {
-            showToast(`任务控制失败：${err.message}`);
+        }
+    }
+
+    window.addEventListener('hashchange', () => {
+        const hash = location.hash;
+        if (hash && hash.startsWith('#session-')) {
+            const sessionId = hash.replace('#session-', '');
+            if (sessionId && sessionId !== currentSessionId && currentProject) {
+                selectSession(sessionId);
+            }
+        } else if (!hash && currentSessionId) {
+            showHome();
         }
     });
 
@@ -1450,404 +1433,12 @@
         });
     }, { passive: true });
 
-    if (toggleLocalToolsBtn) {
-        toggleLocalToolsBtn.addEventListener('click', () => {
-            const collapsed = document.querySelector('#prompt-settings-panel')?.classList.contains('is-collapsed');
-            document.querySelectorAll('.secondary-tools').forEach(section => {
-                section.classList.toggle('is-collapsed', !collapsed);
-            });
-            toggleLocalToolsBtn.textContent = collapsed ? '隐藏本地工具' : '显示本地工具';
-        });
-    }
-
-    if (saveTaskBtn) {
-        saveTaskBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/tasks', {
-                    type: readValue('task-type'),
-                    taskName: readValue('task-name'),
-                    schedule: readValue('task-schedule'),
-                    startTime: readValue('task-time'),
-                    interval: readValue('task-interval'),
-                    cwd: readValue('task-cwd'),
-                    permissionMode: readValue('task-permission'),
-                    prompt: readValue('task-prompt'),
-                    force: readValue('task-force') === 'true',
-                });
-                taskCommand.textContent = result.command;
-                showToast('任务命令已保存');
-                loadLocalCatalog();
-            } catch (e) {
-                showToast(`任务参数错误：${e.message}`);
-            }
-        });
-    }
-
-    if (createTaskBtn) {
-        createTaskBtn.addEventListener('click', async () => {
-            if (readValue('task-type') === 'loop') {
-                showToast('/loop 需要在 Claude 会话内运行，不能注册为系统任务');
-                return;
-            }
-            if (!confirm('将调用 Windows schtasks 创建系统定时任务。是否继续？')) return;
-            try {
-                const result = await apiPost('/api/tasks/create', {
-                    type: readValue('task-type'),
-                    taskName: readValue('task-name'),
-                    schedule: readValue('task-schedule'),
-                    startTime: readValue('task-time'),
-                    cwd: readValue('task-cwd'),
-                    permissionMode: readValue('task-permission'),
-                    prompt: readValue('task-prompt'),
-                    force: readValue('task-force') === 'true',
-                });
-                taskCommand.textContent = result.command;
-                showToast(result.created ? '系统定时任务已创建' : '系统定时任务创建失败');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`创建系统任务失败：${e.message}`);
-            }
-        });
-    }
-
-    if (createAgentBtn) {
-        createAgentBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/agents', {
-                    project: currentProject,
-                    projectRoot: currentCatalogRoot(),
-                    scope: readValue('create-agent-scope'),
-                    name: readValue('create-agent-name'),
-                    description: readValue('create-agent-description'),
-                    model: readValue('create-agent-model'),
-                    tools: readValue('create-agent-tools'),
-                    prompt: readValue('create-agent-prompt'),
-                });
-                agentCreateResult.textContent = `已创建：${result.path}`;
-                showToast('Agent 文件已创建');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`Agent 参数错误：${e.message}`);
-            }
-        });
-    }
-
-    if (updateAgentBtn) {
-        updateAgentBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/agents/update', {
-                    projectRoot: currentCatalogRoot(),
-                    path: readValue('create-agent-path'),
-                    name: readValue('create-agent-name'),
-                    description: readValue('create-agent-description'),
-                    model: readValue('create-agent-model'),
-                    tools: readValue('create-agent-tools'),
-                    prompt: readValue('create-agent-prompt'),
-                });
-                if (agentCreateResult) agentCreateResult.textContent = `已保存：${result.path}`;
-                showToast('Agent 文件已更新');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`Agent 修改失败：${e.message}`);
-            }
-        });
-    }
-
-    if (saveAgentTaskBtn) {
-        saveAgentTaskBtn.addEventListener('click', async () => {
-            try {
-                const base = agentPayloadBase();
-                const result = await apiPost('/api/agent-tasks', {
-                    ...base,
-                    id: readValue('agent-task-id'),
-                    name: readValue('agent-task-name'),
-                    cron: readValue('agent-task-cron'),
-                    sessionPolicy: readValue('agent-task-session-policy') || 'new',
-                    resumeSessionId: readValue('agent-task-resume-session'),
-                    prompt: readValue('agent-task-prompt'),
-                    enabled: readValue('agent-task-enabled') !== 'false',
-                });
-                setValue('agent-task-id', result.id || '');
-                showToast(`Agent 任务已保存：${result.name}`);
-                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
-                renderAgentWorkspace(workspace);
-            } catch (e) {
-                showToast(`保存 Agent 任务失败：${e.message}`);
-            }
-        });
-    }
-
-    if (createAgentSchedulerBtn) {
-        createAgentSchedulerBtn.addEventListener('click', async () => {
-            if (!confirm('将创建一个每分钟运行的 Windows Scheduler，用于检查 Agent cron 任务。是否继续？')) return;
-            try {
-                const result = await apiPost('/api/agent-tasks/create-scheduler', {
-                    taskName: 'Claude Agent Scheduler',
-                    force: true,
-                });
-                if (agentSchedulerCommand) agentSchedulerCommand.textContent = result.command;
-                showToast(result.created ? 'Agent Cron Scheduler 已创建' : 'Agent Cron Scheduler 创建失败');
-            } catch (e) {
-                showToast(`创建 Scheduler 失败：${e.message}`);
-            }
-        });
-    }
-
-    if (saveAgentConnectionBtn) {
-        saveAgentConnectionBtn.addEventListener('click', async () => {
-            try {
-                const base = agentPayloadBase();
-                const result = await apiPost('/api/agent-connections', {
-                    ...base,
-                    id: readValue('agent-connection-id'),
-                    name: readValue('agent-connection-name'),
-                    type: readValue('agent-connection-type'),
-                    appId: readValue('agent-connection-app-id'),
-                    appSecret: readValue('agent-connection-app-secret'),
-                    endpoint: readValue('agent-connection-endpoint'),
-                    targetType: readValue('agent-connection-target-type'),
-                    target: readValue('agent-connection-target'),
-                    token: readValue('agent-connection-token'),
-                });
-                setValue('agent-connection-id', result.id || '');
-                showToast(`连接已保存：${result.name}`);
-                const workspace = await api(`/api/agent-workspace?agentName=${encodeURIComponent(base.agentName)}&projectRoot=${encodeURIComponent(base.projectRoot)}`);
-                renderAgentWorkspace(workspace);
-            } catch (e) {
-                showToast(`保存连接失败：${e.message}`);
-            }
-        });
-    }
-
-    if (qqSaveProfileBtn) {
-        qqSaveProfileBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/qq-push/profile', qqProfilePayload());
-                if (qqProfileResult) {
-                    qqProfileResult.textContent = `已保存 ${result.profileName}；模型密钥：${result.apiKeySet ? '已保存' : '未保存'}；Bot Token：${result.botTokenSet ? '已保存' : '未保存'}。`;
-                }
-                showToast('QQ 推送配置已保存');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`QQ 推送配置保存失败：${e.message}`);
-            }
-        });
-    }
-
-    if (qqRunOnceBtn) {
-        qqRunOnceBtn.addEventListener('click', async () => {
-            if (!confirm('将立即调用模型 API 并向 QQ 机器人接口发送消息。是否继续？')) return;
-            try {
-                await apiPost('/api/qq-push/profile', qqProfilePayload());
-                const result = await apiPost('/api/qq-push/run', { profileName: readValue('qq-profile-name') });
-                if (qqProfileResult) {
-                    qqProfileResult.textContent = `已推送 ${result.profileName}，消息长度 ${result.message.length}。`;
-                }
-                showToast('QQ 推送已执行');
-            } catch (e) {
-                showToast(`QQ 推送失败：${e.message}`);
-            }
-        });
-    }
-
-    if (qqSaveTaskBtn) {
-        qqSaveTaskBtn.addEventListener('click', async () => {
-            try {
-                const result = await apiPost('/api/qq-push/task', qqTaskPayload());
-                qqTaskCommand.textContent = result.command;
-                showToast('QQ 定时任务命令已保存');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`QQ 定时任务参数错误：${e.message}`);
-            }
-        });
-    }
-
-    if (qqCreateTaskBtn) {
-        qqCreateTaskBtn.addEventListener('click', async () => {
-            if (!confirm('将调用 Windows schtasks 创建 QQ 推送计划任务。是否继续？')) return;
-            try {
-                await apiPost('/api/qq-push/profile', qqProfilePayload());
-                const result = await apiPost('/api/qq-push/task/create', qqTaskPayload());
-                qqTaskCommand.textContent = result.command;
-                showToast(result.created ? 'QQ 系统定时任务已创建' : 'QQ 系统定时任务创建失败');
-                loadLocalCatalog(true);
-            } catch (e) {
-                showToast(`创建 QQ 系统任务失败：${e.message}`);
-            }
-        });
-    }
-
-    if (qqModel) {
-        qqModel.addEventListener('change', updateQqConditionalFields);
-    }
-
-    if (qqPayloadPreset) {
-        qqPayloadPreset.addEventListener('change', updateQqConditionalFields);
-    }
-
-    if (savePromptBtn) {
-        savePromptBtn.addEventListener('click', async () => {
-            try {
-                const scope = readValue('prompt-scope') || 'global';
-                const result = await apiPost('/api/prompts', {
-                    scope,
-                    sessionId: readValue('prompt-session-id'),
-                    prompt: readValue('prompt-setting-text'),
-                });
-                promptSettings = result;
-                if (promptSettingText) promptSettingText.dataset.dirty = 'false';
-                renderPromptSettings(readValue('prompt-session-id') || currentSessionId);
-                applyEffectivePrompt(readValue('prompt-session-id') || currentSessionId);
-                if (promptSettingResult) promptSettingResult.textContent = '提示词已保存到本地 data/prompt_settings.json。';
-                showToast('提示词已保存');
-            } catch (e) {
-                showToast(`提示词保存失败：${e.message}`);
-            }
-        });
-    }
-
-    if (loadEffectivePromptBtn) {
-        loadEffectivePromptBtn.addEventListener('click', () => {
-            const prompt = getEffectivePrompt(readValue('prompt-session-id') || currentSessionId);
-            if (agentPrompt) {
-                agentPrompt.value = prompt;
-                agentPrompt.dataset.autoPrompt = 'false';
-                buildAgentCommand();
-            }
-            showToast('已填入当前命令提示词');
-        });
-    }
-
-    if (promptScope) {
-        promptScope.addEventListener('change', () => {
-            const scope = readValue('prompt-scope') || 'global';
-            const sessionId = readValue('prompt-session-id') || currentSessionId;
-            const prompt = scope === 'session'
-                ? (promptSettings.sessionPrompts?.[sessionId] || '')
-                : (promptSettings.globalPrompt || '');
-            if (promptSettingText) {
-                promptSettingText.value = prompt;
-                promptSettingText.dataset.dirty = 'false';
-            }
-        });
-    }
-
-    if (backHomeBtn) {
-        backHomeBtn.addEventListener('click', showHome);
-    }
-
-    if (actionModalSubmit) {
-        actionModalSubmit.addEventListener('click', async () => {
-            if (!modalSubmitHandler) return;
-            try {
-                await modalSubmitHandler();
-            } catch (e) {
-                showToast(`操作失败：${e.message}`);
-            }
-        });
-    }
-
-    [actionModalCancel, actionModalClose].forEach(button => {
-        if (button) button.addEventListener('click', closeModal);
-    });
-
-    if (actionModal) {
-        actionModal.addEventListener('click', (e) => {
-            if (e.target === actionModal) closeModal();
-        });
-    }
-
-    if (openMcpModalBtn) {
-        openMcpModalBtn.addEventListener('click', () => openMcpEditor());
-    }
-
-    if (openSkillModalBtn) {
-        openSkillModalBtn.addEventListener('click', openSkillInstaller);
-    }
-
-    document.addEventListener('contextmenu', (e) => {
-        const sessionCard = e.target.closest('.session-card');
-        const rowTarget = e.target.closest('.resource-row')?.querySelector('.row-menu-target');
-        const target = sessionCard || rowTarget;
-        if (!target) return;
-        const kind = target.dataset.menuKind;
-        const item = decodeData(target.dataset.menuItem);
-        const items = contextItemsFor(kind, item);
-        if (items.length === 0) return;
-        e.preventDefault();
-        showContextMenu(e.clientX, e.clientY, items);
-    });
-
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.context-menu')) hideContextMenu();
-        const modalSkill = e.target.closest('[data-modal-skill-repo]');
-        if (modalSkill) {
-            setValue('modal-skill-name', modalSkill.dataset.modalSkillName || '');
-            setValue('modal-skill-repo', modalSkill.dataset.modalSkillRepo || '');
-            showToast('已填入 Skill 安装信息');
-        }
-    });
-
-    // --- Event listeners ---
-    projectSelect.addEventListener('change', () => {
-        currentProject = projectSelect.value;
-        currentProjectPath = projectSelect.selectedOptions[0]?.dataset.path || '';
-        clearSelectedAgent();
-        if (catalogProjectRoot) {
-            catalogProjectRoot.value = currentProjectPath;
-        }
-        if (catalogProjectRootSelect) {
-            catalogProjectRootSelect.value = currentProjectPath;
-        }
-        currentSessionId = '';
-        conversationView.style.display = 'none';
-        welcomeState.style.display = 'flex';
-        loadLocalCatalog(true);
-        loadSessions();
-    });
-
-    if (useSelectedProjectRootBtn) {
-        useSelectedProjectRootBtn.addEventListener('click', () => {
-            if (catalogProjectRoot) {
-                catalogProjectRoot.value = currentProjectPath;
-            }
-            loadLocalCatalog(true);
-        });
-    }
-
-    if (catalogProjectRoot) {
-        catalogProjectRoot.addEventListener('change', () => {
-            clearSelectedAgent();
-            if (catalogProjectRootSelect) catalogProjectRootSelect.value = catalogProjectRoot.value;
-            loadLocalCatalog(true);
-        });
-    }
-
-    if (catalogProjectRootSelect) {
-        catalogProjectRootSelect.addEventListener('change', () => {
-            if (catalogProjectRoot) catalogProjectRoot.value = catalogProjectRootSelect.value;
-            clearSelectedAgent();
-            loadLocalCatalog(true);
-        });
-    }
-
-    refreshBtn.addEventListener('click', () => {
-        loadSessions();
-        if (currentSessionId) {
-            selectSession(currentSessionId);
-        }
-    });
-
     // --- Keyboard shortcuts ---
     document.addEventListener('keydown', (e) => {
-        // Ctrl+R or F5: refresh
-        if ((e.ctrlKey && e.key === 'r') || e.key === 'F5') {
-            // Let browser handle F5, only intercept Ctrl+R
-            if (e.ctrlKey) {
-                e.preventDefault();
-                refreshBtn.click();
-            }
+        // Ctrl+R: refresh
+        if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            refreshBtn.click();
         }
         // Escape: go back to welcome
         if (e.key === 'Escape') {
@@ -1864,7 +1455,8 @@
 
     // --- Init ---
     buildAgentCommand();
-    updateQqConditionalFields();
     loadLocalCatalog();
-    loadProjects();
+    loadProjects().then(() => {
+        navigateFromHash();
+    });
 })();

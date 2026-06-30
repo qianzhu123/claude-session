@@ -31,6 +31,8 @@ CATALOG_PATH = DATA_DIR / "catalog.json"
 TASKS_PATH = DATA_DIR / "tasks.json"
 MCP_IMPORTS_PATH = DATA_DIR / "mcp_imports.json"
 SKILL_INSTALLS_PATH = DATA_DIR / "skill_installs.json"
+DISABLED_MCP_SERVERS_PATH = DATA_DIR / "disabled_mcp_servers.json"
+DISABLED_SKILLS_PATH = DATA_DIR / "disabled_skills.json"
 PROMPT_SETTINGS_PATH = DATA_DIR / "prompt_settings.json"
 QQ_PUSH_CONFIG_PATH = DATA_DIR / "qq_push_config.json"
 QQ_PUSH_RUNS_PATH = DATA_DIR / "qq_push_runs.json"
@@ -111,6 +113,7 @@ def session_meta_for(project_id, session_id, path=None):
 
 
 def delete_session_record(params):
+    """Soft-delete: hide from UI by setting hidden=True and backup the JSONL file."""
     project_id = str(params.get("projectId", "")).strip()
     session_id = str(params.get("sessionId", "")).strip()
     if not project_id or not session_id:
@@ -132,6 +135,211 @@ def delete_session_record(params):
         "titleAlias": str(params.get("titleAlias", "")),
     })
     return {"sessionId": session_id, "projectId": project_id, "deleted": True, "backupPath": str(backup_file)}
+
+
+def _send_to_recycle_bin_windows(path_str):
+    """Move a file or directory to the Windows Recycle Bin using SHFileOperationW."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCT(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", ctypes.c_uint),
+            ("pFrom", ctypes.c_wchar_p),
+            ("pTo", ctypes.c_wchar_p),
+            ("fFlags", wintypes.WORD),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID),
+            ("lpszProgressTitle", ctypes.c_wchar_p),
+        ]
+
+    FO_DELETE = 3
+    FOF_ALLOWUNDO = 0x40
+    FOF_NOCONFIRMATION = 0x10
+    FOF_SILENT = 0x4
+
+    file_ops = SHFILEOPSTRUCT()
+    file_ops.hwnd = 0
+    file_ops.wFunc = FO_DELETE
+    # pFrom must be double-null-terminated
+    file_ops.pFrom = path_str + "\0"
+    file_ops.pTo = None
+    file_ops.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+    file_ops.fAnyOperationsAborted = False
+    file_ops.hNameMappings = None
+    file_ops.lpszProgressTitle = None
+
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(file_ops))
+    return result == 0 and not file_ops.fAnyOperationsAborted
+
+
+def delete_session_local(params):
+    """Hard-delete: move the JSONL file to the system recycle bin, then clean cache and meta."""
+    project_id = str(params.get("projectId", "")).strip()
+    session_id = str(params.get("sessionId", "")).strip()
+    if not project_id or not session_id:
+        raise ValueError("projectId and sessionId are required")
+    session_file = PROJECTS_DIR / project_id / f"{session_id}.jsonl"
+    if not session_file.exists():
+        raise ValueError("Session file not found")
+
+    # Move to recycle bin
+    if os.name == "nt":
+        success = _send_to_recycle_bin_windows(str(session_file))
+    else:
+        # Fallback: on non-Windows, just do a regular soft-delete backup
+        backup_dir = DATA_DIR / "deleted_sessions" / safe_name(project_id)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_file = backup_dir / f"{session_id}.{int(time.time())}.jsonl"
+        shutil.move(str(session_file), str(backup_file))
+        success = True
+
+    if not success:
+        raise OSError("Failed to move file to recycle bin")
+
+    # Clean up cache
+    cache_file = CACHE_DIR / f"{session_id}.json"
+    if cache_file.exists():
+        cache_file.unlink()
+
+    # Mark as hidden so it won't appear in future scans
+    save_session_meta_record({
+        "projectId": project_id,
+        "sessionId": session_id,
+        "hidden": True,
+        "titleAlias": str(params.get("titleAlias", "")),
+    })
+
+    return {"sessionId": session_id, "projectId": project_id, "deleted": True, "method": "recycle_bin"}
+
+
+def list_deleted_sessions(project_id=None):
+    """List all soft-deleted sessions (hidden=True) with their backup file info."""
+    meta = load_session_meta()
+    results = []
+    for key, record in meta.get("sessions", {}).items():
+        if not isinstance(record, dict):
+            continue
+        if not record.get("hidden"):
+            continue
+        rec_project = record.get("projectId", "")
+        rec_session = record.get("sessionId", "")
+        if project_id and rec_project != project_id:
+            continue
+        # Find backup file
+        backup_dir = DATA_DIR / "deleted_sessions" / safe_name(rec_project)
+        backup_file = None
+        backup_time = ""
+        if backup_dir.exists():
+            for bf in sorted(backup_dir.glob(f"{rec_session}.*.jsonl"), reverse=True):
+                backup_file = str(bf)
+                backup_time = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(bf.stat().st_mtime))
+                break
+        # Try to get title from cache or meta
+        title = record.get("titleAlias", "")
+        # Check if original file still exists (local-deleted sessions won't have backup)
+        original_exists = (PROJECTS_DIR / rec_project / f"{rec_session}.jsonl").exists()
+        results.append({
+            "sessionId": rec_session,
+            "projectId": rec_project,
+            "projectPath": decode_project_id(rec_project),
+            "titleAlias": title or f"Session {rec_session[:8]}...",
+            "updatedAt": record.get("updatedAt", ""),
+            "backupFile": backup_file or "",
+            "backupTime": backup_time,
+            "originalExists": original_exists,
+            "deleteMethod": "local" if (not original_exists and not backup_file) else "soft",
+        })
+    return results
+
+
+def restore_session_record(params):
+    """Restore a soft-deleted session: move backup back and set hidden=False."""
+    project_id = str(params.get("projectId", "")).strip()
+    session_id = str(params.get("sessionId", "")).strip()
+    if not project_id or not session_id:
+        raise ValueError("projectId and sessionId are required")
+
+    target_dir = PROJECTS_DIR / project_id
+    target_file = target_dir / f"{session_id}.jsonl"
+
+    # If original file already exists, just unhide
+    if target_file.exists():
+        save_session_meta_record({
+            "projectId": project_id,
+            "sessionId": session_id,
+            "hidden": False,
+        })
+        return {"sessionId": session_id, "projectId": project_id, "restored": True, "method": "unhide"}
+
+    # Find backup file
+    backup_dir = DATA_DIR / "deleted_sessions" / safe_name(project_id)
+    if not backup_dir.exists():
+        raise ValueError("No backup directory found for this session")
+
+    backup_file = None
+    for bf in sorted(backup_dir.glob(f"{session_id}.*.jsonl"), reverse=True):
+        backup_file = bf
+        break
+
+    if not backup_file or not backup_file.exists():
+        raise ValueError("No backup file found for this session")
+
+    # Move backup back
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(backup_file), str(target_file))
+
+    # Invalidate cache to force re-parse
+    cache_file = CACHE_DIR / f"{session_id}.json"
+    if cache_file.exists():
+        cache_file.unlink()
+
+    # Set hidden=False
+    save_session_meta_record({
+        "projectId": project_id,
+        "sessionId": session_id,
+        "hidden": False,
+    })
+
+    return {"sessionId": session_id, "projectId": project_id, "restored": True, "method": "restore_backup"}
+
+
+def trash_session_backup(params):
+    """Move a soft-deleted session's backup file to the system recycle bin."""
+    project_id = str(params.get("projectId", "")).strip()
+    session_id = str(params.get("sessionId", "")).strip()
+    if not project_id or not session_id:
+        raise ValueError("projectId and sessionId are required")
+
+    backup_dir = DATA_DIR / "deleted_sessions" / safe_name(project_id)
+    if not backup_dir.exists():
+        raise ValueError("No backup directory found")
+
+    backup_file = None
+    for bf in sorted(backup_dir.glob(f"{session_id}.*.jsonl"), reverse=True):
+        backup_file = bf
+        break
+
+    if not backup_file or not backup_file.exists():
+        raise ValueError("No backup file found for this session")
+
+    # Move backup to recycle bin
+    if os.name == "nt":
+        success = _send_to_recycle_bin_windows(str(backup_file))
+    else:
+        backup_file.unlink()
+        success = True
+
+    if not success:
+        raise OSError("Failed to move backup to recycle bin")
+
+    # Clean up cache
+    cache_file = CACHE_DIR / f"{session_id}.json"
+    if cache_file.exists():
+        cache_file.unlink()
+
+    return {"sessionId": session_id, "projectId": project_id, "trashed": True}
 
 
 def parse_frontmatter(text):
@@ -161,6 +369,69 @@ def stable_id(prefix, *parts):
     return f"{prefix}-{safe_name(raw)[:80]}"
 
 
+def _resource_key(path, name):
+    return f"{Path(path).resolve()}::{name}"
+
+
+def load_disabled_mcp_servers(path=None):
+    records = read_json_file(Path(path or DISABLED_MCP_SERVERS_PATH), [])
+    return records if isinstance(records, list) else []
+
+
+def save_disabled_mcp_servers(records, path=None):
+    write_json_file(Path(path or DISABLED_MCP_SERVERS_PATH), records)
+
+
+def load_disabled_skills(path=None):
+    records = read_json_file(Path(path or DISABLED_SKILLS_PATH), [])
+    return records if isinstance(records, list) else []
+
+
+def save_disabled_skills(records, path=None):
+    write_json_file(Path(path or DISABLED_SKILLS_PATH), records)
+
+
+def disabled_mcp_catalog_items(path=None):
+    items = []
+    for record in load_disabled_mcp_servers(path):
+        if not isinstance(record, dict):
+            continue
+        definition = record.get("definition", {})
+        if not isinstance(definition, dict):
+            definition = {"value": definition}
+        items.append({
+            "name": record.get("name", ""),
+            "scope": record.get("scope", "disabled"),
+            "path": record.get("path", ""),
+            "transport": definition.get("type") or ("http" if definition.get("url") else "stdio"),
+            "command": definition.get("command", ""),
+            "url": definition.get("url", ""),
+            "args": definition.get("args", []),
+            "definition": definition,
+            "disabled": True,
+            "disabledAt": record.get("disabledAt", ""),
+        })
+    return items
+
+
+def disabled_skill_catalog_items(path=None):
+    items = []
+    for record in load_disabled_skills(path):
+        if not isinstance(record, dict):
+            continue
+        items.append({
+            "name": record.get("name", ""),
+            "description": record.get("description", ""),
+            "scope": record.get("scope", "disabled"),
+            "path": record.get("disabledPath", ""),
+            "originalPath": record.get("originalPath", ""),
+            "sourceType": record.get("sourceType", "direct"),
+            "disabled": True,
+            "disabledAt": record.get("disabledAt", ""),
+        })
+    return items
+
+
 def scan_skill_dir(base_dir, scope):
     skills = []
     if not base_dir.exists():
@@ -174,6 +445,7 @@ def scan_skill_dir(base_dir, scope):
             "scope": scope,
             "path": str(skill_md.parent),
             "sourceType": "direct",
+            "disabled": False,
         })
     for skill_md in sorted(base_dir.glob("*/skills/*/SKILL.md")):
         text = skill_md.read_text(encoding="utf-8", errors="replace")
@@ -191,6 +463,7 @@ def scan_skill_dir(base_dir, scope):
             "bundle": bundle_dir.name,
             "bundlePath": str(bundle_dir),
             "activatable": not top_level_target.exists(),
+            "disabled": False,
         })
     return skills
 
@@ -328,6 +601,7 @@ def scan_mcp_file(path, scope):
             "url": definition.get("url", ""),
             "args": definition.get("args", []),
             "definition": definition,
+            "disabled": False,
         })
     return result
 
@@ -362,27 +636,168 @@ def delete_mcp_server(params):
     config = read_json_file(config_path, {})
     servers = config.get("mcpServers", {}) if isinstance(config, dict) else {}
     if not isinstance(servers, dict) or name not in servers:
-        raise ValueError("MCP server not found")
+        key = _resource_key(config_path, name)
+        records = load_disabled_mcp_servers()
+        remaining = [item for item in records if _resource_key(item.get("path", ""), item.get("name", "")) != key]
+        if len(remaining) == len(records):
+            raise ValueError("MCP server not found")
+        save_disabled_mcp_servers(remaining)
+        return {"name": name, "path": str(config_path), "deleted": True}
     servers.pop(name, None)
     config["mcpServers"] = servers
     write_json_file(config_path, config)
     return {"name": name, "path": str(config_path), "deleted": True}
 
 
+def set_mcp_server_enabled(params):
+    name = str(params.get("name", "")).strip()
+    config_path = Path(str(params.get("path", "")).strip())
+    enabled = bool(params.get("enabled", True))
+    if not name or not config_path:
+        raise ValueError("name and path are required")
+    records = load_disabled_mcp_servers()
+    key = _resource_key(config_path, name)
+
+    if not enabled:
+        config = read_json_file(config_path, {})
+        servers = config.get("mcpServers", {}) if isinstance(config, dict) else {}
+        if not isinstance(servers, dict) or name not in servers:
+            raise ValueError("MCP server not found")
+        definition = servers.pop(name)
+        config["mcpServers"] = servers
+        records = [item for item in records if _resource_key(item.get("path", ""), item.get("name", "")) != key]
+        records.append({
+            "name": name,
+            "path": str(config_path),
+            "scope": params.get("scope", "disabled"),
+            "definition": definition,
+            "disabledAt": now_timestamp(),
+        })
+        write_json_file(config_path, config)
+        save_disabled_mcp_servers(records)
+        return {"name": name, "path": str(config_path), "enabled": False}
+
+    match = None
+    remaining = []
+    for item in records:
+        if _resource_key(item.get("path", ""), item.get("name", "")) == key:
+            match = item
+        else:
+            remaining.append(item)
+    if not match:
+        raise ValueError("Disabled MCP server not found")
+    definition = match.get("definition", {})
+    if not isinstance(definition, dict):
+        raise ValueError("Disabled MCP definition is invalid")
+    config = read_json_file(config_path, {})
+    if not isinstance(config, dict):
+        config = {}
+    if not isinstance(config.get("mcpServers"), dict):
+        config["mcpServers"] = {}
+    if name in config["mcpServers"]:
+        raise ValueError("MCP server already exists in active config")
+    config["mcpServers"][name] = definition
+    write_json_file(config_path, config)
+    save_disabled_mcp_servers(remaining)
+    return {"name": name, "path": str(config_path), "enabled": True}
+
+
+def _skill_allowed_roots(project_root):
+    return [
+        Path(project_root or os.getcwd()) / ".claude" / "skills",
+        CLAUDE_DIR / "skills",
+        DATA_DIR / "disabled_skills",
+    ]
+
+
+def _path_is_inside(path, roots):
+    resolved = Path(path).resolve()
+    for root in roots:
+        root = Path(root)
+        if root.exists() or root.parent.exists():
+            try:
+                resolved.relative_to(root.resolve())
+                return True
+            except ValueError:
+                continue
+    return False
+
+
+def set_skill_enabled(params):
+    enabled = bool(params.get("enabled", True))
+    project_root = params.get("projectRoot", os.getcwd())
+    records = load_disabled_skills()
+
+    if not enabled:
+        target = Path(str(params.get("path", "")).strip())
+        if not target.exists() or not target.is_dir():
+            raise ValueError("Skill directory not found")
+        active_roots = _skill_allowed_roots(project_root)[:2]
+        if not _path_is_inside(target, active_roots):
+            raise ValueError("Refusing to disable a skill outside project/user skills directories")
+        skill_md = target / "SKILL.md"
+        if not skill_md.exists():
+            raise ValueError("Refusing to disable a directory without SKILL.md")
+        text = skill_md.read_text(encoding="utf-8", errors="replace")
+        meta = parse_frontmatter(text)
+        skill_name = meta.get("name") or target.name
+        disabled_root = DATA_DIR / "disabled_skills"
+        disabled_root.mkdir(parents=True, exist_ok=True)
+        disabled_path = disabled_root / f"{safe_name(skill_name)}-{int(time.time())}"
+        shutil.move(str(target), str(disabled_path))
+        records = [item for item in records if str(Path(item.get("originalPath", "")).resolve()).lower() != str(target.resolve()).lower()]
+        records.append({
+            "name": skill_name,
+            "description": meta.get("description", ""),
+            "scope": params.get("scope", "disabled"),
+            "sourceType": params.get("sourceType", "direct"),
+            "originalPath": str(target),
+            "disabledPath": str(disabled_path),
+            "disabledAt": now_timestamp(),
+        })
+        save_disabled_skills(records)
+        return {"name": skill_name, "path": str(disabled_path), "enabled": False}
+
+    disabled_path = Path(str(params.get("path", "")).strip())
+    match = None
+    remaining = []
+    for item in records:
+        item_path = Path(str(item.get("disabledPath", "")))
+        same_path = disabled_path and str(item_path.resolve()).lower() == str(disabled_path.resolve()).lower()
+        same_name = item.get("name") == params.get("name")
+        if same_path or same_name:
+            match = item
+        else:
+            remaining.append(item)
+    if not match:
+        raise ValueError("Disabled Skill not found")
+    source = Path(match.get("disabledPath", ""))
+    target = Path(match.get("originalPath", ""))
+    if not source.exists():
+        raise ValueError("Disabled Skill directory not found")
+    if target.exists():
+        raise ValueError("Target Skill directory already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(source), str(target))
+    save_disabled_skills(remaining)
+    return {"name": match.get("name", target.name), "path": str(target), "enabled": True}
+
+
 def delete_skill_path(params):
     target = Path(str(params.get("path", "")).strip())
     if not target.exists() or not target.is_dir():
         raise ValueError("Skill directory not found")
-    allowed_roots = [
-        Path(params.get("projectRoot", os.getcwd())) / ".claude" / "skills",
-        CLAUDE_DIR / "skills",
-    ]
-    resolved = target.resolve()
-    if not any(str(resolved).lower().startswith(str(root.resolve()).lower()) for root in allowed_roots if root.exists() or root.parent.exists()):
+    allowed_roots = _skill_allowed_roots(params.get("projectRoot", os.getcwd()))
+    if not _path_is_inside(target, allowed_roots):
         raise ValueError("Refusing to delete a skill outside project/user skills directories")
     if not (target / "SKILL.md").exists():
         raise ValueError("Refusing to delete a directory without SKILL.md")
     shutil.rmtree(target)
+    records = [
+        item for item in load_disabled_skills()
+        if str(Path(item.get("disabledPath", "")).resolve()).lower() != str(target.resolve()).lower()
+    ]
+    save_disabled_skills(records)
     return {"path": str(target), "deleted": True}
 
 
@@ -431,10 +846,12 @@ def build_local_catalog(project_root=None, claude_dir=None, home_config=None):
     mcp_servers.extend(scan_mcp_file(project_root / ".mcp.json", "project"))
     mcp_servers.extend(scan_mcp_file(claude_dir / "mcp.json", "user"))
     mcp_servers.extend(scan_mcp_file(home_config, "user"))
+    mcp_servers.extend(disabled_mcp_catalog_items())
 
     skills = []
     skills.extend(scan_skill_dir(project_root / ".claude" / "skills", "project"))
     skills.extend(scan_skill_dir(claude_dir / "skills", "user"))
+    skills.extend(disabled_skill_catalog_items())
 
     agents = []
     agents.extend(scan_agent_dir(project_root / ".claude" / "agents", "project"))
@@ -686,6 +1103,31 @@ def save_agent_task(params, path=None):
     tasks.append(record)
     write_json_file(tasks_path, tasks)
     return record
+
+
+def delete_agent_task(params, path=None):
+    tasks_path = Path(path or AGENT_TASKS_PATH)
+    task_id = str(params.get("id", "")).strip()
+    agent_name = str(params.get("agentName", "")).strip()
+    project_root = str(params.get("projectRoot", "")).strip()
+    if not task_id:
+        raise ValueError("id is required")
+    tasks = read_json_file(tasks_path, [])
+    if not isinstance(tasks, list):
+        tasks = []
+    kept = [
+        item for item in tasks
+        if not (
+            isinstance(item, dict)
+            and item.get("id") == task_id
+            and (not agent_name or item.get("agentName") == agent_name)
+            and (not project_root or item.get("projectRoot") == project_root)
+        )
+    ]
+    if len(kept) == len(tasks):
+        raise ValueError("Agent task not found")
+    write_json_file(tasks_path, kept)
+    return {"id": task_id, "deleted": True}
 
 
 def build_agent_task_run_command(task):
@@ -1922,6 +2364,7 @@ def get_sessions_list(project_id):
             "fileSize": jsonl_file.stat().st_size,
             "projectId": project_id,
             "projectPath": project_path,
+            "path": str(jsonl_file),
             "resumeCommand": build_resume_command(project_path, session_id),
         })
 
@@ -1987,6 +2430,9 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
             data["cacheHit"] = cache_hit
             self._json_response(data)
+        elif path == "/api/sessions/deleted":
+            project_id = params.get("project", [None])[0]
+            self._json_response(list_deleted_sessions(project_id or None))
         else:
             # Serve static files
             super().do_GET()
@@ -2041,6 +2487,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 record = delete_mcp_server(payload)
                 refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
                 self._json_response(record, 200)
+            elif path == "/api/mcp/enabled":
+                record = set_mcp_server_enabled(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 200)
             elif path == "/api/skills/install-command":
                 command = build_skill_install_command(payload)
                 record = dict(payload)
@@ -2069,6 +2519,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 result = delete_skill_path(payload)
                 refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
                 self._json_response(result, 200)
+            elif path == "/api/skills/enabled":
+                result = set_skill_enabled(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(result, 200)
             elif path == "/api/skills/search":
                 self._json_response({"results": search_skill_repositories(payload.get("query", ""), source=payload.get("source", "all"))})
             elif path == "/api/prompts":
@@ -2080,6 +2534,15 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 self._json_response(record, 200)
             elif path == "/api/sessions/delete":
                 record = delete_session_record(payload)
+                self._json_response(record, 200)
+            elif path == "/api/sessions/delete-local":
+                record = delete_session_local(payload)
+                self._json_response(record, 200)
+            elif path == "/api/sessions/restore":
+                record = restore_session_record(payload)
+                self._json_response(record, 200)
+            elif path == "/api/sessions/trash-backup":
+                record = trash_session_backup(payload)
                 self._json_response(record, 200)
             elif path == "/api/open-path":
                 self._json_response(open_local_path(payload), 200)
@@ -2125,6 +2588,10 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
                 record = save_agent_task(payload)
                 refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
                 self._json_response(record, 201)
+            elif path == "/api/agent-tasks/delete":
+                record = delete_agent_task(payload)
+                refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
+                self._json_response(record, 200)
             elif path == "/api/agent-connections":
                 record = save_agent_connection(payload)
                 refresh_local_catalog(project_root=payload.get("projectRoot") or os.getcwd())
