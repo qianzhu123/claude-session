@@ -7,7 +7,7 @@ A local web interface for browsing Claude Code session history and managing rela
 Double-click `start.bat`, or start the server manually:
 
 ```bash
-cd D:\code\myweb\claude-session-viewer
+cd .
 python server.py
 ```
 
